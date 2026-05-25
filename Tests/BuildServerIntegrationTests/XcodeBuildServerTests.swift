@@ -56,6 +56,13 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertNil(XcodeBuildServer.searchForConfig(in: dir, options: SourceKitLSPOptions()))
   }
 
+  func testSwiftPMProjectNotClaimedByXcode() throws {
+    let dir = try temporaryDirectory()
+    try "// swift-tools-version:5.9\nimport PackageDescription\nlet package = Package(name: \"P\")\n"
+      .write(to: dir.appendingPathComponent("Package.swift"), atomically: true, encoding: .utf8)
+    XCTAssertNil(XcodeBuildServer.searchForConfig(in: dir, options: SourceKitLSPOptions()))
+  }
+
   private func temporaryDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcode-bs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
