@@ -63,6 +63,63 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertNil(XcodeBuildServer.searchForConfig(in: dir, options: SourceKitLSPOptions()))
   }
 
+  // MARK: - preferredPlatform selection logic
+
+  func testPreferredPlatformMacOnly() {
+    XCTAssertEqual(SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["macosx"]), "macosx")
+  }
+
+  func testPreferredPlatformIOSPrefersSimulator() {
+    XCTAssertEqual(
+      SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["iphoneos", "iphonesimulator"]),
+      "iphonesimulator"
+    )
+  }
+
+  func testPreferredPlatformIOSDeviceOnly() {
+    XCTAssertEqual(SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["iphoneos"]), "iphoneos")
+  }
+
+  func testPreferredPlatformTVOSPrefersSimulator() {
+    XCTAssertEqual(
+      SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["appletvos", "appletvsimulator"]),
+      "appletvsimulator"
+    )
+  }
+
+  func testPreferredPlatformWatchOSPrefersSimulator() {
+    XCTAssertEqual(
+      SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["watchos", "watchsimulator"]),
+      "watchsimulator"
+    )
+  }
+
+  func testPreferredPlatformCrossFamilyPrefersMacOS() {
+    XCTAssertEqual(
+      SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["macosx", "iphoneos", "iphonesimulator"]),
+      "macosx"
+    )
+  }
+
+  func testPreferredPlatformEmptyFallsBackToMacOS() {
+    XCTAssertEqual(SwiftBuildSession.preferredPlatform(forSupportedPlatforms: []), "macosx")
+  }
+
+  func testPreferredPlatformTVOSDeviceOnly() {
+    XCTAssertEqual(SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["appletvos"]), "appletvos")
+  }
+
+  func testPreferredPlatformWatchOSDeviceOnly() {
+    XCTAssertEqual(SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["watchos"]), "watchos")
+  }
+
+  func testPreferredPlatformIsOrderIndependent() {
+    XCTAssertEqual(
+      SwiftBuildSession.preferredPlatform(forSupportedPlatforms: ["iphonesimulator", "iphoneos"]),
+      "iphonesimulator"
+    )
+  }
+
   private func temporaryDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcode-bs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

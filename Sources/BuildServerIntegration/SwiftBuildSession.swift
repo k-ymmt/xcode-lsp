@@ -311,11 +311,30 @@ package actor SwiftBuildSession {
     if let destinationOverride, let parsed = Self.parseDestination(destinationOverride) {
       return parsed
     }
-    return Self.runDestination(forPlatform: target.platforms.first)
+    return Self.runDestination(forPlatform: Self.preferredPlatform(forSupportedPlatforms: target.platforms))
   }
 
-  /// Infer a run destination from a platform name.
-  static func runDestination(forPlatform platform: String?) -> SWBRunDestinationInfo {
+  /// Choose the preferred platform name from a target's supported platforms for headless indexing.
+  ///
+  /// Priority: macOS first (host-native, always available, needs no simulator runtime); then each
+  /// non-macOS family's simulator (no code signing / device provisioning required for indexing);
+  /// then devices. Falls back to "macosx" when nothing is recognized (e.g. an empty list).
+  ///
+  /// This is `package` (unlike `runDestination(forPlatform:)`) because it operates purely on
+  /// platform-name strings and is unit-tested from the test module; keeping it free of any
+  /// `SwiftBuild` type preserves this file's isolation of `import SwiftBuild`.
+  package static func preferredPlatform(forSupportedPlatforms supported: [String]) -> String {
+    let set = Set(supported)
+    let order = [
+      "macosx",
+      "iphonesimulator", "appletvsimulator", "watchsimulator",
+      "iphoneos", "appletvos", "watchos",
+    ]
+    return order.first { set.contains($0) } ?? "macosx"
+  }
+
+  /// Map a platform name to a run destination. Unknown names fall back to macOS.
+  static func runDestination(forPlatform platform: String) -> SWBRunDestinationInfo {
     switch platform {
     case "iphonesimulator":
       return .iOSSimulator
@@ -329,9 +348,9 @@ package actor SwiftBuildSession {
       return .watchOSSimulator
     case "watchos":
       return .watchOS
+    case "macosx":
+      return .macOS
     default:
-      // TODO: Richer platform inference. `SWBTargetInfo` does not currently surface supported
-      // platforms, so without a destination override we default to macOS.
       return .macOS
     }
   }
