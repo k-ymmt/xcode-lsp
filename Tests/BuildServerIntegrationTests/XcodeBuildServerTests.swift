@@ -316,6 +316,33 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// A scheme building `App` (which depends on `Framework`) scopes to both targets via the
+  /// dependency closure.
+  func testSchemeIncludesDependencyClosure() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithFrameworkDependency, sourceContents: "let x = 1\n")
+    defer { project.keepAlive() }
+    try project.writeSharedScheme(named: "AppScheme", buildTargetNames: ["App"])
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "AppScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = Set(targetsResponse.targets.map(\.displayName))
+    XCTAssertTrue(names.contains("App"), "expected App in scope, got: \(names)")
+    XCTAssertTrue(
+      names.contains("Framework"),
+      "expected Framework (App's dependency) in scope via the dependency closure, got: \(names)"
+    )
+  }
+
   /// Test 2: `prepare` runs an actual build that populates the index store directory on disk.
   func testPreparePopulatesIndexStore() async throws {
     try skipUnlessXcodeAvailable()
