@@ -42,7 +42,7 @@ package enum XcodeScheme {
     if containerPath.pathExtension == "xcworkspace",
       let entries = try? FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil)
     {
-      containers.append(contentsOf: entries.filter { $0.pathExtension == "xcodeproj" })
+      containers.append(contentsOf: entries.filter { $0.pathExtension == "xcodeproj" }.sorted { $0.path < $1.path })
     }
     return containers
   }
@@ -64,7 +64,7 @@ package enum XcodeScheme {
       guard let userDirs = try? fm.contentsOfDirectory(at: userdata, includingPropertiesForKeys: nil) else {
         continue
       }
-      for dir in userDirs {
+      for dir in userDirs where dir.pathExtension == "xcuserdatad" {
         let candidate = dir.appendingPathComponent("xcschemes/\(scheme).xcscheme", isDirectory: false)
         if fm.fileExists(atPath: candidate.path) {
           return candidate
