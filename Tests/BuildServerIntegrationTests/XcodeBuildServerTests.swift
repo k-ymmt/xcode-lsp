@@ -238,5 +238,30 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertTrue(exists, "expected index store directory to exist at \(indexStorePath.path) after prepare")
     XCTAssertTrue(isDirectory.boolValue, "expected index store path \(indexStorePath.path) to be a directory")
   }
+
+  /// Test 3: a real macOS target reports `macosx` among its supported platforms, proving that
+  /// `SUPPORTED_PLATFORMS` macro evaluation works end-to-end against a real SwiftBuild session.
+  func testMacOSTargetReportsMacosxPlatform() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(sourceContents: "print(\"hello\")\n")
+    defer { project.keepAlive() }
+
+    // `platforms` is not surfaced through the BSP `BuildTarget` response, so this exercises
+    // `SwiftBuildSession.targets()` directly — the unit that computes supported platforms.
+    let session = try await SwiftBuildSession(
+      containerPath: project.xcodeprojURL,
+      configuration: "Debug",
+      destinationOverride: nil,
+      derivedDataPath: project.projectRoot.appending(component: ".build").appending(component: "sk-xcode")
+    )
+    addTeardownBlock { await session.close() }
+
+    let targets = try await session.targets()
+    XCTAssertTrue(
+      targets.contains { $0.platforms.contains("macosx") },
+      "expected a target whose supported platforms include macosx, got: \(targets.map(\.platforms))"
+    )
+  }
   #endif
 }

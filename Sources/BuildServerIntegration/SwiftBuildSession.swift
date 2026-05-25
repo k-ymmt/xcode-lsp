@@ -132,11 +132,32 @@ package actor SwiftBuildSession {
   /// All targets in the loaded workspace.
   package func targets() async throws -> [XcodeTarget] {
     let info = try await session.workspaceInfo()
-    return info.targetInfos.map { targetInfo in
-      // `SWBTargetInfo` does not surface supported platforms; downstream platform inference is
-      // therefore based on the destination override (or defaults to macOS) in `runDestination(for:)`.
-      XcodeTarget(guid: targetInfo.guid, name: targetInfo.targetName, platforms: [])
+    var result: [XcodeTarget] = []
+    for targetInfo in info.targetInfos {
+      let platforms = await supportedPlatforms(forTargetGUID: targetInfo.guid)
+      result.append(
+        XcodeTarget(guid: targetInfo.guid, name: targetInfo.targetName, platforms: platforms)
+      )
     }
+    return result
+  }
+
+  /// Evaluate the target's `SUPPORTED_PLATFORMS` build setting (e.g. `["iphoneos", "iphonesimulator"]`).
+  ///
+  /// `SUPPORTED_PLATFORMS` does not depend on the active run destination, so this evaluates with build
+  /// parameters that set only the configuration. Returns an empty array on failure so that destination
+  /// selection falls back to macOS rather than failing target enumeration.
+  private func supportedPlatforms(forTargetGUID guid: String) async -> [String] {
+    var params = SWBBuildParameters()
+    params.configurationName = configuration
+    return await orLog("Evaluating SUPPORTED_PLATFORMS for target \(guid)") {
+      try await session.evaluateMacroAsStringList(
+        "SUPPORTED_PLATFORMS",
+        level: .target(guid),
+        buildParameters: params,
+        overrides: [:]
+      )
+    } ?? []
   }
 
   // MARK: Indexing info
