@@ -101,7 +101,11 @@ package actor XcodeBuildServer: BuiltInBuildServer {
       let closure = Set(try await session.dependencyClosure(forTargetGUIDs: seedGUIDs))
       let scoped = all.filter { closure.contains($0.guid) }
       // Defensive: if the closure unexpectedly excludes everything, prefer indexing all targets over none.
-      return scoped.isEmpty ? all : scoped
+      guard !scoped.isEmpty else {
+        return all
+      }
+      logger.log("Xcode scheme '\(scheme, privacy: .public)' scoped to \(scoped.count) target(s)")
+      return scoped
     case .fallbackNotFound:
       logger.log("Xcode scheme '\(scheme, privacy: .public)' not found; indexing all targets")
       return all
