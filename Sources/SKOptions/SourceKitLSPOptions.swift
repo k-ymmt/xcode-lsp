@@ -149,7 +149,9 @@ public struct SourceKitLSPOptions: Sendable, Codable, Equatable, LSPAnyCodable {
   public struct XcodeOptions: Sendable, Codable, Equatable {
     /// The `.xcodeproj` or `.xcworkspace` to load, relative to the project root. Auto-detected if `nil`.
     public var container: String?
-    /// The scheme to use. Optional; informational for now.
+    /// The Xcode scheme whose Build-action targets (plus their dependency closure) the build server is
+    /// scoped to. If `nil`, all targets in the project/workspace are used. If the named scheme has no
+    /// `.xcscheme` file but a same-named target exists, that target is used; otherwise all targets are used.
     public var scheme: String?
     /// The build configuration to use. Defaults to `Debug`.
     public var configuration: String?
