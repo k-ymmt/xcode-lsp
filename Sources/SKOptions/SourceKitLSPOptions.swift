@@ -146,6 +146,39 @@ public struct SourceKitLSPOptions: Sendable, Codable, Equatable, LSPAnyCodable {
     }
   }
 
+  public struct XcodeOptions: Sendable, Codable, Equatable {
+    /// The `.xcodeproj` or `.xcworkspace` to load, relative to the project root. Auto-detected if `nil`.
+    public var container: String?
+    /// The scheme to use. Optional; informational for now.
+    public var scheme: String?
+    /// The build configuration to use. Defaults to `Debug`.
+    public var configuration: String?
+    /// An xcodebuild `-destination` specifier (e.g. `platform=iOS Simulator,name=iPhone 15`).
+    /// If `nil`, a destination is inferred from each target's supported platform.
+    public var destination: String?
+
+    public init(
+      container: String? = nil,
+      scheme: String? = nil,
+      configuration: String? = nil,
+      destination: String? = nil
+    ) {
+      self.container = container
+      self.scheme = scheme
+      self.configuration = configuration
+      self.destination = destination
+    }
+
+    static func merging(base: XcodeOptions, override: XcodeOptions?) -> XcodeOptions {
+      return XcodeOptions(
+        container: override?.container ?? base.container,
+        scheme: override?.scheme ?? base.scheme,
+        configuration: override?.configuration ?? base.configuration,
+        destination: override?.destination ?? base.destination
+      )
+    }
+  }
+
   public struct CompilationDatabaseOptions: Sendable, Codable, Equatable {
     /// Additional paths to search for a compilation database, relative to a workspace root.
     public var searchPaths: [String]?
@@ -323,6 +356,13 @@ public struct SourceKitLSPOptions: Sendable, Codable, Equatable, LSPAnyCodable {
     set { swiftPM = newValue }
   }
 
+  /// Options for Xcode build server workspaces.
+  private var xcode: XcodeOptions?
+  public var xcodeOrDefault: XcodeOptions {
+    get { xcode ?? .init() }
+    set { xcode = newValue }
+  }
+
   /// Dictionary with the following keys, defining options for workspaces with a compilation database.
   private var compilationDatabase: CompilationDatabaseOptions?
   public var compilationDatabaseOrDefault: CompilationDatabaseOptions {
@@ -484,6 +524,7 @@ public struct SourceKitLSPOptions: Sendable, Codable, Equatable, LSPAnyCodable {
 
   public init(
     swiftPM: SwiftPMOptions? = .init(),
+    xcode: XcodeOptions? = nil,
     fallbackBuildSystem: FallbackBuildSystemOptions? = .init(),
     buildSettingsTimeout: Int? = nil,
     compilationDatabase: CompilationDatabaseOptions? = .init(),
@@ -506,6 +547,7 @@ public struct SourceKitLSPOptions: Sendable, Codable, Equatable, LSPAnyCodable {
     buildServerWorkspaceRequestsTimeout: Double? = nil
   ) {
     self.swiftPM = swiftPM
+    self.xcode = xcode
     self.fallbackBuildSystem = fallbackBuildSystem
     self.buildSettingsTimeout = buildSettingsTimeout
     self.compilationDatabase = compilationDatabase
@@ -550,6 +592,7 @@ public struct SourceKitLSPOptions: Sendable, Codable, Equatable, LSPAnyCodable {
   public static func merging(base: SourceKitLSPOptions, override: SourceKitLSPOptions?) -> SourceKitLSPOptions {
     return SourceKitLSPOptions(
       swiftPM: SwiftPMOptions.merging(base: base.swiftPMOrDefault, override: override?.swiftPM),
+      xcode: XcodeOptions.merging(base: base.xcodeOrDefault, override: override?.xcode),
       fallbackBuildSystem: FallbackBuildSystemOptions.merging(
         base: base.fallbackBuildSystemOrDefault,
         override: override?.fallbackBuildSystem

@@ -65,7 +65,8 @@
       "enum" : [
         "buildServer",
         "compilationDatabase",
-        "swiftPM"
+        "swiftPM",
+        "xcode"
       ],
       "markdownDescription" : "Default workspace type. Overrides workspace type selection logic.",
       "type" : "string"
@@ -356,6 +357,33 @@
       "description" : "When a task is started that should be displayed to the client as a work done progress, how many milliseconds to wait before actually starting the work done progress. This prevents flickering of the work done progress in the client for short-lived index tasks which end within this duration.",
       "markdownDescription" : "When a task is started that should be displayed to the client as a work done progress, how many milliseconds to wait before actually starting the work done progress. This prevents flickering of the work done progress in the client for short-lived index tasks which end within this duration.",
       "type" : "number"
+    },
+    "xcode" : {
+      "description" : "Options for Xcode build server workspaces.",
+      "markdownDescription" : "Options for Xcode build server workspaces.",
+      "properties" : {
+        "configuration" : {
+          "description" : "The build configuration to use. Defaults to `Debug`.",
+          "markdownDescription" : "The build configuration to use. Defaults to `Debug`.",
+          "type" : "string"
+        },
+        "container" : {
+          "description" : "The `.xcodeproj` or `.xcworkspace` to load, relative to the project root. Auto-detected if `nil`.",
+          "markdownDescription" : "The `.xcodeproj` or `.xcworkspace` to load, relative to the project root. Auto-detected if `nil`.",
+          "type" : "string"
+        },
+        "destination" : {
+          "description" : "An xcodebuild `-destination` specifier (e.g. `platform=iOS Simulator,name=iPhone 15`). If `nil`, a destination is inferred from each target's supported platform.",
+          "markdownDescription" : "An xcodebuild `-destination` specifier (e.g. `platform=iOS Simulator,name=iPhone 15`). If `nil`, a destination is inferred from each target's supported platform.",
+          "type" : "string"
+        },
+        "scheme" : {
+          "description" : "The scheme to use. Optional; informational for now.",
+          "markdownDescription" : "The scheme to use. Optional; informational for now.",
+          "type" : "string"
+        }
+      },
+      "type" : "object"
     }
   },
   "title" : "SourceKit-LSP Configuration",

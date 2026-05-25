@@ -33,6 +33,11 @@ The structure of the file is currently not guaranteed to be stable. Options may 
   - `forceResolvedVersions: boolean`: Equivalent to SwiftPM's `--force-resolved-versions` option. Makes all processes (including background indexing) treat Package.resolved as a lock file.
   - `disableSandbox: boolean`: Disables running subprocesses from SwiftPM in a sandbox. Equivalent to SwiftPM's `--disable-sandbox` option. Useful when running `sourcekit-lsp` in a sandbox because nested sandboxes are not supported.
   - `buildSystem: "native"|"swiftbuild"`: Which SwiftPM build system should be used when opening a package.
+- `xcode`: Options for Xcode build server workspaces.
+  - `container: string`: The `.xcodeproj` or `.xcworkspace` to load, relative to the project root. Auto-detected if `nil`.
+  - `scheme: string`: The scheme to use. Optional; informational for now.
+  - `configuration: string`: The build configuration to use. Defaults to `Debug`.
+  - `destination: string`: An xcodebuild `-destination` specifier (e.g. `platform=iOS Simulator,name=iPhone 15`). If `nil`, a destination is inferred from each target's supported platform.
 - `compilationDatabase`: Dictionary with the following keys, defining options for workspaces with a compilation database.
   - `searchPaths: string[]`: Additional paths to search for a compilation database, relative to a workspace root.
 - `fallbackBuildSystem`: Dictionary with the following keys, defining options for files that aren't managed by any build server.
@@ -51,7 +56,7 @@ The structure of the file is currently not guaranteed to be stable. Options may 
   - `inputMirrorDirectory: string`: Write all input received by SourceKit-LSP on stdin to a file in this directory. Useful to record and replay an entire SourceKit-LSP session.
   - `outputMirrorDirectory: string`: Write all data sent from SourceKit-LSP to the client to a file in this directory. Useful to record the raw communication between SourceKit-LSP and the client on a low level.
 - `sourcekitd`: Options modifying the behavior of sourcekitd.
-- `defaultWorkspaceType: "buildServer"|"compilationDatabase"|"swiftPM"`: Default workspace type. Overrides workspace type selection logic.
+- `defaultWorkspaceType: "buildServer"|"compilationDatabase"|"swiftPM"|"xcode"`: Default workspace type. Overrides workspace type selection logic.
 - `generatedFilesPath: string`: Directory in which generated interfaces and macro expansions should be stored.
 - `backgroundIndexing: boolean`: Whether background indexing is enabled.
 - `backgroundPreparationMode: "build"|"noLazy"|"enabled"`: Determines how background indexing should prepare a target.
