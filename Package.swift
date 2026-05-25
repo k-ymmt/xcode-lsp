@@ -61,6 +61,8 @@ var targets: [Target] = [
       + swiftPMDependency([
         .product(name: "SwiftPM-auto", package: "swift-package-manager"),
         .product(name: "SwiftPMDataModel-auto", package: "swift-package-manager"),
+        .product(name: "SwiftBuild", package: "swift-build"),
+        .product(name: "SWBBuildService", package: "swift-build"),
       ]),
     exclude: ["CMakeLists.txt"],
   ),
@@ -797,7 +799,10 @@ var dependencies: [Package.Dependency] {
       .package(path: "../swift-argument-parser"),
       .package(path: "../swift-syntax"),
       .package(path: "../swift-crypto"),
-    ] + swiftPMDependency([.package(name: "swift-package-manager", path: "../swiftpm")])
+    ] + swiftPMDependency([
+      .package(name: "swift-package-manager", path: "../swiftpm"),
+      .package(name: "swift-build", path: "../swift-build"),
+    ])
   } else {
     let relatedDependenciesBranch = "main"
 
@@ -815,7 +820,8 @@ var dependencies: [Package.Dependency] {
       .package(url: "https://github.com/swiftlang/swift-format.git", branch: relatedDependenciesBranch),
     ]
       + swiftPMDependency([
-        .package(url: "https://github.com/swiftlang/swift-package-manager.git", branch: relatedDependenciesBranch)
+        .package(url: "https://github.com/swiftlang/swift-package-manager.git", branch: relatedDependenciesBranch),
+        .package(url: "https://github.com/swiftlang/swift-build.git", branch: relatedDependenciesBranch),
       ])
   }
 }
