@@ -68,5 +68,89 @@ final class XcodeSchemeTests: XCTestCase {
     let data = scheme(buildEntries: entry(blueprintName: "App"), extraActions: testAction)
     XCTAssertEqual(XcodeScheme.buildActionTargetNames(xcschemeContents: data), ["App"])
   }
+
+  private func makeTempDir() throws -> URL {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcscheme-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+    return dir
+  }
+
+  private func writeScheme(_ name: String, into schemesDir: URL, blueprintName: String) throws {
+    try FileManager.default.createDirectory(at: schemesDir, withIntermediateDirectories: true)
+    let data = scheme(buildEntries: entry(blueprintName: blueprintName))
+    try data.write(to: schemesDir.appendingPathComponent("\(name).xcscheme", isDirectory: false))
+  }
+
+  func testTargetNamesFindsSharedScheme() throws {
+    let root = try makeTempDir()
+    let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+    try writeScheme(
+      "MyApp",
+      into: container.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      blueprintName: "MyApp"
+    )
+    XCTAssertEqual(
+      XcodeScheme.targetNames(scheme: "MyApp", containerPath: container, projectRoot: root),
+      ["MyApp"]
+    )
+  }
+
+  func testTargetNamesPrefersSharedOverUser() throws {
+    let root = try makeTempDir()
+    let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+    try writeScheme(
+      "MyApp",
+      into: container.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      blueprintName: "SharedTarget"
+    )
+    try writeScheme(
+      "MyApp",
+      into: container.appendingPathComponent("xcuserdata/me.xcuserdatad/xcschemes", isDirectory: true),
+      blueprintName: "UserTarget"
+    )
+    XCTAssertEqual(
+      XcodeScheme.targetNames(scheme: "MyApp", containerPath: container, projectRoot: root),
+      ["SharedTarget"]
+    )
+  }
+
+  func testTargetNamesFindsUserSchemeWhenNoShared() throws {
+    let root = try makeTempDir()
+    let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+    try writeScheme(
+      "MyApp",
+      into: container.appendingPathComponent("xcuserdata/me.xcuserdatad/xcschemes", isDirectory: true),
+      blueprintName: "UserTarget"
+    )
+    XCTAssertEqual(
+      XcodeScheme.targetNames(scheme: "MyApp", containerPath: container, projectRoot: root),
+      ["UserTarget"]
+    )
+  }
+
+  func testTargetNamesReturnsNilWhenMissing() throws {
+    let root = try makeTempDir()
+    let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+    try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
+    XCTAssertNil(XcodeScheme.targetNames(scheme: "Nope", containerPath: container, projectRoot: root))
+  }
+
+  func testTargetNamesSearchesWorkspaceMemberProjects() throws {
+    let root = try makeTempDir()
+    let workspace = root.appendingPathComponent("MyApp.xcworkspace", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    // Scheme lives in a member .xcodeproj, not the workspace itself.
+    let memberProject = root.appendingPathComponent("Member.xcodeproj", isDirectory: true)
+    try writeScheme(
+      "MyApp",
+      into: memberProject.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      blueprintName: "MemberTarget"
+    )
+    XCTAssertEqual(
+      XcodeScheme.targetNames(scheme: "MyApp", containerPath: workspace, projectRoot: root),
+      ["MemberTarget"]
+    )
+  }
   #endif
 }

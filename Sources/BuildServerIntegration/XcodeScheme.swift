@@ -20,6 +20,60 @@ import FoundationXML
 /// Locates and parses Xcode `.xcscheme` files. SwiftBuild does not expose scheme discovery, so the
 /// build server reads schemes from disk itself. This type has no `import SwiftBuild` dependency.
 package enum XcodeScheme {
+  /// Locate the `.xcscheme` named `scheme` and return its `BuildAction` target names.
+  ///
+  /// Search order: shared schemes (`xcshareddata/xcschemes`) before user schemes
+  /// (`xcuserdata/*.xcuserdatad/xcschemes`). For a `.xcworkspace` container, member `.xcodeproj`s
+  /// under `projectRoot` are searched too. Returns `nil` if no matching file exists (the caller
+  /// then decides how to fall back).
+  package static func targetNames(scheme: String, containerPath: URL, projectRoot: URL) -> [String]? {
+    guard let url = schemeFileURL(scheme: scheme, containerPath: containerPath, projectRoot: projectRoot),
+      let data = try? Data(contentsOf: url)
+    else {
+      return nil
+    }
+    return buildActionTargetNames(xcschemeContents: data)
+  }
+
+  /// Containers to search for scheme files: the container itself, plus (for a workspace) member
+  /// `.xcodeproj`s directly under `projectRoot`.
+  private static func searchContainers(containerPath: URL, projectRoot: URL) -> [URL] {
+    var containers = [containerPath]
+    if containerPath.pathExtension == "xcworkspace",
+      let entries = try? FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil)
+    {
+      containers.append(contentsOf: entries.filter { $0.pathExtension == "xcodeproj" })
+    }
+    return containers
+  }
+
+  private static func schemeFileURL(scheme: String, containerPath: URL, projectRoot: URL) -> URL? {
+    let fm = FileManager.default
+    let containers = searchContainers(containerPath: containerPath, projectRoot: projectRoot)
+
+    // Shared schemes first, across all candidate containers.
+    for container in containers {
+      let shared = container.appendingPathComponent("xcshareddata/xcschemes/\(scheme).xcscheme", isDirectory: false)
+      if fm.fileExists(atPath: shared.path) {
+        return shared
+      }
+    }
+    // Then user schemes: xcuserdata/<anything>.xcuserdatad/xcschemes/<name>.xcscheme
+    for container in containers {
+      let userdata = container.appendingPathComponent("xcuserdata", isDirectory: true)
+      guard let userDirs = try? fm.contentsOfDirectory(at: userdata, includingPropertiesForKeys: nil) else {
+        continue
+      }
+      for dir in userDirs {
+        let candidate = dir.appendingPathComponent("xcschemes/\(scheme).xcscheme", isDirectory: false)
+        if fm.fileExists(atPath: candidate.path) {
+          return candidate
+        }
+      }
+    }
+    return nil
+  }
+
   /// Extract the target names (`BlueprintName`) referenced by a scheme's `BuildAction`.
   ///
   /// Only `BuildableReference`s nested inside `<BuildAction>` are considered; references in
