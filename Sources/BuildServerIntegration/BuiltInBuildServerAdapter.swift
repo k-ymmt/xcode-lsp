@@ -127,6 +127,7 @@ actor BuiltInBuildServerAdapter: QueueBasedMessageHandler {
     await buildServerHooks.preHandleRequest?(request.params)
     switch request {
     case let request as RequestAndReply<BuildShutdownRequest>:
+      await underlyingBuildServer.close()
       await request.reply { VoidResponse() }
     case let request as RequestAndReply<BuildTargetPrepareRequest>:
       await request.reply { try await underlyingBuildServer.prepare(request: request.params) }

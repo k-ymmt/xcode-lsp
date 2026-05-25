@@ -62,4 +62,12 @@ package protocol BuiltInBuildServer: AnyObject, Sendable {
 
   /// Wait until the build graph has been loaded.
   func waitForBuildSystemUpdates(request: WorkspaceWaitForBuildSystemUpdatesRequest) async -> VoidResponse
+
+  /// Called when the build server is shutting down, so it can release any resources (e.g. close
+  /// out-of-process build service sessions). Default implementation does nothing.
+  func close() async
+}
+
+extension BuiltInBuildServer {
+  package func close() async {}
 }

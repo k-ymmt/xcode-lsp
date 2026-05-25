@@ -77,6 +77,7 @@ package struct XcodeBuildFailedError: Error, CustomStringConvertible {
 package actor SwiftBuildSession {
   private let service: SWBBuildService
   private let session: SWBBuildServiceSession
+  private var closed = false
   private let containerPath: URL
   let configuration: String
   let indexStorePath: URL
@@ -246,6 +247,8 @@ package actor SwiftBuildSession {
   /// SwiftBuild requires `SWBBuildServiceSession` to be closed before it is deallocated (it `assertionFailure`s
   /// otherwise), so this must be called when the session is no longer needed. Safe to call more than once.
   package func close() async {
+    if closed { return }
+    closed = true
     await orLog("Closing SwiftBuild session") {
       try await session.close()
     }
