@@ -135,11 +135,6 @@ final class XcodeBuildServerTests: XCTestCase {
     let unwrappedOptions = try XCTUnwrap(options, "expected sourceKitOptions for main.swift")
     let args = unwrappedOptions.compilerArguments
 
-    // Log the actual arguments so the assertion below can be reasoned about against real SwiftBuild output.
-    FileHandle.standardError.write(
-      Data("sourceKitOptions compilerArguments for main.swift: \(args.joined(separator: " "))\n".utf8)
-    )
-
     XCTAssertFalse(args.isEmpty, "expected non-empty compiler arguments for main.swift")
     // Prove these are real Swift compiler arguments for main.swift (not an empty/fallback set):
     // - the source file path must appear in the argument list

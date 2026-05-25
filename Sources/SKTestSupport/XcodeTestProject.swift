@@ -44,6 +44,7 @@ package final class XcodeTestProject {
   /// - Important: The leading indentation of the lines below uses tabs, matching what Xcode writes. The closing
   ///   delimiter of the multi-line string literal is placed at column zero so that Swift does not strip the leading
   ///   tabs from the embedded content.
+  // swift-format-ignore
   package static let pbxprojTemplate: String = """
 // !$*UTF8*$!
 {

@@ -112,7 +112,8 @@ package actor XcodeBuildServer: BuiltInBuildServer {
         languageIds: [.c, .cpp, .objective_c, .objective_cpp, .swift],
         dependencies: [],
         dataKind: .sourceKit,
-        data: SourceKitBuildTarget(toolchain: nil).encodeToLSPAny()  // SwiftBuild resolves the toolchain internally, so no explicit toolchain URI is provided.
+        // SwiftBuild resolves the toolchain internally, so no explicit toolchain URI is provided.
+        data: SourceKitBuildTarget(toolchain: nil).encodeToLSPAny()
       )
     }
     return WorkspaceBuildTargetsResponse(targets: targets)
