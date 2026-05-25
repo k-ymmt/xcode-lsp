@@ -142,6 +142,24 @@ package actor SwiftBuildSession {
     return result
   }
 
+  /// Compute the dependency closure (including implicit dependencies) of the given target GUIDs.
+  ///
+  /// Returns the closure as target GUIDs. Used to expand an `xcode.scheme`'s Build-action targets to
+  /// everything they depend on, so dependency frameworks are indexed too. The closure does not depend
+  /// on the run destination, so build parameters set only the configuration.
+  package func dependencyClosure(forTargetGUIDs guids: [String]) async throws -> [String] {
+    guard !guids.isEmpty else {
+      return []
+    }
+    var params = SWBBuildParameters()
+    params.configurationName = configuration
+    return try await session.computeDependencyClosure(
+      targetGUIDs: guids,
+      buildParameters: params,
+      includeImplicitDependencies: true
+    )
+  }
+
   /// Evaluate the target's `SUPPORTED_PLATFORMS` build setting (e.g. `["iphoneos", "iphonesimulator"]`).
   ///
   /// `SUPPORTED_PLATFORMS` does not depend on the active run destination, so this evaluates with build

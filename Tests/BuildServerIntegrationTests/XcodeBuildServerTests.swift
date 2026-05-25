@@ -120,6 +120,66 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  // MARK: - resolveScheme decision logic
+
+  func testResolveSchemeMatchesNamedTargets() {
+    let targets = [
+      XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_Fw", name: "Framework", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_Other", name: "Other", platforms: ["macosx"]),
+    ]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "AppScheme",
+      schemeTargetNames: ["App"],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_App"]))
+  }
+
+  func testResolveSchemeMatchesMultipleNamedTargets() {
+    let targets = [
+      XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_Fw", name: "Framework", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_Other", name: "Other", platforms: ["macosx"]),
+    ]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "AppScheme",
+      schemeTargetNames: ["App", "Framework"],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_App", "G_Fw"]))
+  }
+
+  func testResolveSchemeFallsBackToSameNamedTargetWhenNoFile() {
+    let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "App",
+      schemeTargetNames: nil,
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_App"]))
+  }
+
+  func testResolveSchemeNotFoundWhenNoFileAndNoSameNamedTarget() {
+    let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "Ghost",
+      schemeTargetNames: nil,
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .fallbackNotFound)
+  }
+
+  func testResolveSchemeNoKnownTargetsWhenFileNamesDoNotMatch() {
+    let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "AppScheme",
+      schemeTargetNames: ["Vanished"],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .fallbackNoKnownTargets)
+  }
+
   private func temporaryDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcode-bs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -205,6 +265,81 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertTrue(
       referencesSDK || referencesTarget,
       "expected real Swift compilation flags (-sdk/.sdk path or -target) in compiler arguments, got: \(args)"
+    )
+  }
+
+  /// A scheme that builds the `MyApp` target scopes the build server to that target.
+  func testSchemeScopesToBuildActionTargets() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    try project.writeSharedScheme(named: "MyAppScheme", buildTargetNames: ["MyApp"])
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "MyAppScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    XCTAssertEqual(
+      targetsResponse.targets.map(\.displayName),
+      ["MyApp"],
+      "scheme building only MyApp should scope the build server to MyApp"
+    )
+  }
+
+  /// An unknown scheme name (no file, no same-named target) falls back to indexing all targets.
+  func testUnknownSchemeFallsBackToAllTargets() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "DoesNotExist")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    XCTAssertTrue(
+      targetsResponse.targets.contains { $0.displayName == "MyApp" },
+      "unknown scheme should fall back to all targets (including MyApp)"
+    )
+  }
+
+  /// A scheme building `App` (which depends on `Framework`) scopes to both targets via the
+  /// dependency closure.
+  func testSchemeIncludesDependencyClosure() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithFrameworkDependency, sourceContents: "let x = 1\n")
+    defer { project.keepAlive() }
+    try project.writeSharedScheme(named: "AppScheme", buildTargetNames: ["App"])
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "AppScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = Set(targetsResponse.targets.map(\.displayName))
+    XCTAssertTrue(names.contains("App"), "expected App in scope, got: \(names)")
+    XCTAssertTrue(
+      names.contains("Framework"),
+      "expected Framework (App's dependency) in scope via the dependency closure, got: \(names)"
     )
   }
 
