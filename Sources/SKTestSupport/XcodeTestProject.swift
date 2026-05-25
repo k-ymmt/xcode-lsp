@@ -14,10 +14,9 @@ package import Foundation
 
 /// A minimal, valid `.xcodeproj` written to a fresh temporary directory on disk.
 ///
-/// The project defines a single macOS command-line tool target named `MyApp` with one Swift source file,
-/// `main.swift`. The generated `project.pbxproj` is a hand-crafted template that has been validated to be accepted by
-/// `xcodebuild` (`xcodebuild -list`, `xcodebuild -dumpPIF`), which is the operation SwiftBuild performs when loading
-/// the project.
+/// The project defines a single target named `MyApp` with one Swift source file, `main.swift`. The target
+/// kind is determined by the ``Kind`` passed to ``init(kind:sourceContents:fileManager:)``: either a macOS
+/// command-line tool (the default) or an iOS application.
 ///
 /// The temporary directory is removed when the `XcodeTestProject` is deinitialized, unless the
 /// `SOURCEKIT_LSP_KEEP_TEST_SCRATCH_DIR` environment variable is set.
@@ -34,6 +33,15 @@ package final class XcodeTestProject {
   package let sourceFileURL: URL
 
   private let fileManager: FileManager
+
+  /// The kind of project to generate.
+  package enum Kind: Sendable {
+    /// A macOS command-line tool (`com.apple.product-type.tool`, `SDKROOT = macosx`).
+    case macOSCommandLineTool
+    /// An iOS application (`com.apple.product-type.application`, `SDKROOT = iphoneos`,
+    /// `SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"`).
+    case iOSApp
+  }
 
   /// The validated `project.pbxproj` template for a macOS command-line tool target named `MyApp` with a single
   /// `main.swift` source file.
@@ -227,12 +235,213 @@ package final class XcodeTestProject {
 
 """
 
-  /// Creates a minimal macOS command-line tool Xcode project on disk in a fresh temporary directory.
+  /// The validated `project.pbxproj` template for an iOS application target named `MyApp` with a single
+  /// `main.swift` source file.
+  ///
+  /// This content is byte-identical to a `project.pbxproj` that was verified with
+  /// `xcodebuild -list`, `xcodebuild -dumpPIF`, and `plutil -lint` using Xcode 26.4 (objectVersion 56).
+  ///
+  /// - Important: The leading indentation of the lines below uses tabs, matching what Xcode writes. The closing
+  ///   delimiter of the multi-line string literal is placed at column zero so that Swift does not strip the leading
+  ///   tabs from the embedded content.
+  // swift-format-ignore
+  package static let iOSAppPbxprojTemplate: String = """
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A100000000000000000000B1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A1 /* main.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A100000000000000000000A1 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A100000000000000000000A2 /* MyApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = MyApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A100000000000000000000C1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A100000000000000000000D1 = {
+			isa = PBXGroup;
+			children = (
+				A100000000000000000000A1 /* main.swift */,
+				A100000000000000000000D2 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A100000000000000000000D2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A100000000000000000000A2 /* MyApp.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A100000000000000000000E1 /* MyApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A100000000000000000000F1 /* Build configuration list for PBXNativeTarget "MyApp" */;
+			buildPhases = (
+				A100000000000000000000C2 /* Sources */,
+				A100000000000000000000C1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MyApp;
+			productName = MyApp;
+			productReference = A100000000000000000000A2 /* MyApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A100000000000000000000B0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2640;
+				TargetAttributes = {
+					A100000000000000000000E1 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+				};
+			};
+			buildConfigurationList = A100000000000000000000F0 /* Build configuration list for PBXProject "MyApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A100000000000000000000D1;
+			productRefGroup = A100000000000000000000D2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A100000000000000000000E1 /* MyApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A100000000000000000000C2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000000000000000000B1 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A100000000000000000000F2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A100000000000000000000F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A100000000000000000000F4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A100000000000000000000F5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = com.example.MyApp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A100000000000000000000F0 /* Build configuration list for PBXProject "MyApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100000000000000000000F2 /* Debug */,
+				A100000000000000000000F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A100000000000000000000F1 /* Build configuration list for PBXNativeTarget "MyApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100000000000000000000F4 /* Debug */,
+				A100000000000000000000F5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A100000000000000000000B0 /* Project object */;
+}
+
+"""
+
+  /// Creates a minimal Xcode project on disk in a fresh temporary directory.
   ///
   /// - Parameters:
+  ///   - kind: The kind of project to generate. Defaults to `.macOSCommandLineTool`.
   ///   - sourceContents: The contents written to `main.swift`.
   ///   - fileManager: The `FileManager` used to create and (on deinit) remove the project. Defaults to `.default`.
-  package init(sourceContents: String, fileManager: FileManager = .default) throws {
+  package init(kind: Kind = .macOSCommandLineTool, sourceContents: String, fileManager: FileManager = .default) throws {
     self.fileManager = fileManager
 
     let scratchDirectoriesName = "sourcekit-lsp-test-scratch"
@@ -252,7 +461,12 @@ package final class XcodeTestProject {
     self.sourceFileURL = root.appendingPathComponent("main.swift", isDirectory: false)
 
     try fileManager.createDirectory(at: xcodeprojURL, withIntermediateDirectories: true)
-    try Self.pbxprojTemplate.write(
+    let template: String
+    switch kind {
+    case .macOSCommandLineTool: template = Self.pbxprojTemplate
+    case .iOSApp: template = Self.iOSAppPbxprojTemplate
+    }
+    try template.write(
       to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
       atomically: true,
       encoding: .utf8
