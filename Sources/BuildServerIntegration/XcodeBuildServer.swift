@@ -27,6 +27,7 @@ package actor XcodeBuildServer: BuiltInBuildServer {
   private let options: SourceKitLSPOptions
   private let connectionToSourceKitLSP: any Connection
   private let session: SwiftBuildSession
+  private let scheme: String?
 
   /// Cache of indexing files keyed by target GUID.
   private var indexingFilesByTarget: [String: [XcodeIndexingFile]] = [:]
@@ -58,6 +59,7 @@ package actor XcodeBuildServer: BuiltInBuildServer {
     self.projectRoot = projectRoot
     self.containerPath = containerPath
     self.options = options
+    self.scheme = options.xcodeOrDefault.scheme
     self.connectionToSourceKitLSP = connectionToSourceKitLSP
     let configuration = options.xcodeOrDefault.configuration ?? "Debug"
     let derivedData = projectRoot.appending(component: ".build").appending(component: "sourcekit-lsp-xcode")
@@ -71,14 +73,44 @@ package actor XcodeBuildServer: BuiltInBuildServer {
 
   // MARK: Caching
 
-  /// All targets in the loaded workspace, cached after first load.
+  /// All in-scope targets, cached after first load. When `xcode.scheme` is set, this is the scheme's
+  /// Build-action targets plus their dependency closure; otherwise it is every workspace target.
   private func allTargets() async throws -> [XcodeTarget] {
     if let cachedTargets {
       return cachedTargets
     }
-    let targets = try await session.targets()
-    self.cachedTargets = targets
-    return targets
+    let all = try await session.targets()
+    let scoped = try await applySchemeScope(to: all)
+    self.cachedTargets = scoped
+    return scoped
+  }
+
+  /// Narrow `all` to the configured scheme's target closure, or return `all` unchanged when no scheme
+  /// is configured or the scheme cannot be resolved.
+  private func applySchemeScope(to all: [XcodeTarget]) async throws -> [XcodeTarget] {
+    guard let scheme else {
+      return all
+    }
+    let schemeTargetNames = XcodeScheme.targetNames(
+      scheme: scheme,
+      containerPath: containerPath,
+      projectRoot: projectRoot
+    )
+    switch Self.resolveScheme(named: scheme, schemeTargetNames: schemeTargetNames, allTargets: all) {
+    case .seeds(let seedGUIDs):
+      let closure = Set(try await session.dependencyClosure(forTargetGUIDs: seedGUIDs))
+      let scoped = all.filter { closure.contains($0.guid) }
+      // Defensive: if the closure unexpectedly excludes everything, prefer indexing all targets over none.
+      return scoped.isEmpty ? all : scoped
+    case .fallbackNotFound:
+      logger.log("Xcode scheme '\(scheme, privacy: .public)' not found; indexing all targets")
+      return all
+    case .fallbackNoKnownTargets:
+      logger.log(
+        "Xcode scheme '\(scheme, privacy: .public)' resolved to no known targets; indexing all targets"
+      )
+      return all
+    }
   }
 
   /// Per-file indexing info for the target with the given GUID, cached after first load.
