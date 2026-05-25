@@ -263,5 +263,44 @@ final class XcodeBuildServerTests: XCTestCase {
       "expected a target whose supported platforms include macosx, got: \(targets.map(\.platforms))"
     )
   }
+
+  /// Test 4: an iOS target reports a simulator platform and, with no destination override, its indexing
+  /// compiler arguments reference the iOS Simulator SDK — the direct regression test for the previous
+  /// "always fall back to macOS" behavior.
+  func testIOSTargetInfersSimulatorDestination() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .iOSApp, sourceContents: "let x = 1\n")
+    defer { project.keepAlive() }
+
+    let session = try await SwiftBuildSession(
+      containerPath: project.xcodeprojURL,
+      configuration: "Debug",
+      destinationOverride: nil,
+      derivedDataPath: project.projectRoot.appending(component: ".build").appending(component: "sk-xcode")
+    )
+    addTeardownBlock { await session.close() }
+
+    let targets = try await session.targets()
+    let iosTarget = try XCTUnwrap(
+      targets.first { $0.platforms.contains("iphonesimulator") },
+      "expected a target whose supported platforms include iphonesimulator, got: \(targets.map(\.platforms))"
+    )
+
+    let indexingFiles = try await session.indexingFiles(for: iosTarget)
+    let args = indexingFiles.flatMap(\.compilerArguments)
+    XCTAssertFalse(args.isEmpty, "expected compiler arguments for the iOS target source files")
+
+    // The chosen destination must be the iOS Simulator: either the SDK path mentions iPhoneSimulator,
+    // or the `-target` triple is an iOS simulator triple (e.g. arm64-apple-ios17.0-simulator).
+    let mentionsIOSSimulator = args.contains { arg in
+      let lower = arg.lowercased()
+      return lower.contains("iphonesimulator") || (lower.contains("-apple-ios") && lower.contains("simulator"))
+    }
+    XCTAssertTrue(
+      mentionsIOSSimulator,
+      "expected iOS Simulator SDK/target in compiler arguments, got: \(args)"
+    )
+  }
   #endif
 }
