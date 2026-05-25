@@ -98,7 +98,12 @@ package actor SwiftBuildSession {
     self.indexDatabasePath = derivedDataPath.appendingPathComponent("IndexDatabase")
 
     let containerFilePath = try containerPath.filePath
-    let service = try await SWBBuildService()
+    // Run the SwiftBuild service in-process. SourceKit-LSP links the `SwiftBuild` library directly, so there is no
+    // standalone `SWBBuildServiceBundle` executable to launch out-of-process (the default mode on macOS); attempting
+    // the out-of-process path fails with "cannot determine build service executable URL". The in-process mode loads
+    // the `swiftbuildServiceEntryPoint` symbol from the already-linked SwiftBuild image, which is exactly the
+    // configuration we ship.
+    let service = try await SWBBuildService(connectionMode: .inProcess)
     self.service = service
     let (sessionResult, _) = await service.createSession(
       name: containerFilePath,
@@ -198,7 +203,16 @@ package actor SwiftBuildSession {
       // terminal state. `waitForCompletion()` then provides a stronger completion guarantee even if
       // stream iteration is interrupted.
       let events = try await operation.start()
-      for await _ in events {}
+      for await event in events {
+        // Surface build error diagnostics so that a failed preparation can be diagnosed. Only the generic `.diagnostic`
+        // case carries an error/warning/note kind; restrict logging to errors there to avoid noise from notes and
+        // progress events.
+        if case .diagnostic(let info) = event, info.kind == .error {
+          logger.error(
+            "SwiftBuild prepare error for '\(target.name, privacy: .public)': \(info.message, privacy: .public)"
+          )
+        }
+      }
       await operation.waitForCompletion()
       // Check the terminal state. Any outcome other than `.succeeded` means the index store was
       // not fully populated, and the caller (prepare) must be informed so it can surface the error.
@@ -225,6 +239,19 @@ package actor SwiftBuildSession {
     try await session.loadWorkspace(containerPath: containerPath.filePath)
   }
 
+  // MARK: Lifecycle
+
+  /// Close the underlying SwiftBuild session and shut down the build service.
+  ///
+  /// SwiftBuild requires `SWBBuildServiceSession` to be closed before it is deallocated (it `assertionFailure`s
+  /// otherwise), so this must be called when the session is no longer needed. Safe to call more than once.
+  package func close() async {
+    await orLog("Closing SwiftBuild session") {
+      try await session.close()
+    }
+    await service.close()
+  }
+
   // MARK: Helpers
 
   private func makeBuildRequest(for target: XcodeTarget) throws -> SWBBuildRequest {
@@ -233,11 +260,30 @@ package actor SwiftBuildSession {
     parameters.configurationName = configuration
     parameters.activeRunDestination = runDestination(for: target)
     parameters.arenaInfo = try makeArenaInfo()
+    parameters.overrides.synthesized = indexingBuildSettingOverrides()
 
     var request = SWBBuildRequest()
     request.parameters = parameters
     request.add(target: SWBConfiguredTarget(guid: target.guid))
     return request
+  }
+
+  /// Build setting overrides applied to indexing / preparation builds.
+  ///
+  /// Preparation only needs the compilation step that populates the index store; it does not need a fully signed,
+  /// linked product. Code signing in particular fails for product types that require it (e.g. macOS command-line
+  /// tools on recent SDKs report "An empty code signing identity is not valid" / "Entitlements are required") and
+  /// would otherwise abort the build before — or regardless of whether — the index store has been populated. Disabling
+  /// signing here mirrors what an indexing build does and keeps preparation hermetic and headless.
+  private func indexingBuildSettingOverrides() -> SWBSettingsTable {
+    var table = SWBSettingsTable()
+    table.set(value: "NO", for: "CODE_SIGNING_ALLOWED")
+    table.set(value: "NO", for: "CODE_SIGNING_REQUIRED")
+    table.set(value: "", for: "CODE_SIGN_IDENTITY")
+    table.set(value: "", for: "CODE_SIGN_ENTITLEMENTS")
+    table.set(value: "-", for: "AD_HOC_CODE_SIGNING_ALLOWED")
+    table.set(value: "NO", for: "ENTITLEMENTS_REQUIRED")
+    return table
   }
 
   /// An arena whose index data store path points at our index store, with the index data store enabled.

@@ -177,6 +177,14 @@ package actor XcodeBuildServer: BuiltInBuildServer {
   package func waitForBuildSystemUpdates(request: WorkspaceWaitForBuildSystemUpdatesRequest) async -> VoidResponse {
     return VoidResponse()
   }
+
+  /// Shut down the underlying SwiftBuild session and build service.
+  ///
+  /// SwiftBuild requires its session to be closed before deallocation, so this should be called when the build server
+  /// is no longer needed. Safe to call more than once.
+  package func close() async {
+    await session.close()
+  }
 }
 
 extension XcodeBuildServer {
