@@ -146,6 +146,43 @@ extension BuildTargetIdentifier {
   }
 }
 
+// MARK: BuildTargetIdentifier for Xcode
+
+extension BuildTargetIdentifier {
+  package static func createXcode(targetGUID: String) throws -> BuildTargetIdentifier {
+    var components = URLComponents()
+    components.scheme = "xcode"
+    components.host = "target"
+    components.queryItems = [URLQueryItem(name: "guid", value: targetGUID)]
+
+    struct FailedToConvertXcodeTargetToUrlError: Swift.Error, CustomStringConvertible {
+      var guid: String
+      var description: String { "Failed to generate URL for Xcode target GUID: \(guid)" }
+    }
+
+    guard let url = components.url else {
+      throw FailedToConvertXcodeTargetToUrlError(guid: targetGUID)
+    }
+    return BuildTargetIdentifier(uri: URI(url))
+  }
+
+  package var xcodeTargetGUID: String {
+    get throws {
+      struct InvalidTargetIdentifierError: Swift.Error, CustomStringConvertible {
+        var target: BuildTargetIdentifier
+        var description: String { "Invalid Xcode target identifier \(target)" }
+      }
+      guard let components = URLComponents(url: self.uri.arbitrarySchemeURL, resolvingAgainstBaseURL: false),
+        components.scheme == "xcode", components.host == "target",
+        let guid = components.queryItems?.last(where: { $0.name == "guid" })?.value
+      else {
+        throw InvalidTargetIdentifierError(target: self)
+      }
+      return guid
+    }
+  }
+}
+
 @_spi(SourceKitLSP) extension BuildTargetIdentifier: @retroactive CustomLogStringConvertible {
   package var description: String {
     return uri.stringValue
