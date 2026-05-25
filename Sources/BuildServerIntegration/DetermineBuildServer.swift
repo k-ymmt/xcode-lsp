@@ -102,6 +102,9 @@ package func determineBuildServer(
       #if !NO_SWIFTPM_DEPENDENCY
       spec = SwiftPMBuildServer.searchForConfig(in: workspaceFolderUrl, options: options)
       #endif
+    case .xcode:
+      // TODO(Task 7): wire up XcodeBuildServer.searchForConfig here.
+      break
     }
 
     if let spec {

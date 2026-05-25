@@ -14,4 +14,5 @@ public enum WorkspaceType: String, Codable, Sendable {
   case buildServer
   case compilationDatabase
   case swiftPM
+  case xcode
 }
