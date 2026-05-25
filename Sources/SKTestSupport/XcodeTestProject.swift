@@ -14,9 +14,10 @@ package import Foundation
 
 /// A minimal, valid `.xcodeproj` written to a fresh temporary directory on disk.
 ///
-/// The project defines a single target named `MyApp` with one Swift source file, `main.swift`. The target
-/// kind is determined by the ``Kind`` passed to ``init(kind:sourceContents:fileManager:)``: either a macOS
-/// command-line tool (the default) or an iOS application.
+/// The project layout depends on the ``Kind`` passed to ``init(kind:sourceContents:fileManager:)``.
+/// `.macOSCommandLineTool` and `.iOSApp` each produce a single target named `MyApp` with one source file,
+/// `main.swift`. `.appWithFrameworkDependency` produces two targets: `App` (a macOS command-line tool with
+/// `App/main.swift`) depending on `Framework` (a macOS framework with `Framework/Framework.swift`).
 ///
 /// The temporary directory is removed when the `XcodeTestProject` is deinitialized, unless the
 /// `SOURCEKIT_LSP_KEEP_TEST_SCRATCH_DIR` environment variable is set.
@@ -29,7 +30,9 @@ package final class XcodeTestProject {
   /// The `MyApp.xcodeproj` bundle inside ``projectRoot``.
   package let xcodeprojURL: URL
 
-  /// The `main.swift` source file inside ``projectRoot``. Its contents are the `sourceContents` passed to ``init``.
+  /// The primary Swift source file whose contents are the `sourceContents` passed to ``init``. For
+  /// `.macOSCommandLineTool` and `.iOSApp` this is `main.swift` at the project root; for
+  /// `.appWithFrameworkDependency` it is `App/main.swift`.
   package let sourceFileURL: URL
 
   private let fileManager: FileManager
@@ -738,7 +741,8 @@ package final class XcodeTestProject {
   ///
   /// - Parameters:
   ///   - kind: The kind of project to generate. Defaults to `.macOSCommandLineTool`.
-  ///   - sourceContents: The contents written to `main.swift`.
+  ///   - sourceContents: The contents written to the primary source file (`main.swift`, or `App/main.swift` for
+  ///     `.appWithFrameworkDependency`).
   ///   - fileManager: The `FileManager` used to create and (on deinit) remove the project. Defaults to `.default`.
   package init(kind: Kind = .macOSCommandLineTool, sourceContents: String, fileManager: FileManager = .default) throws {
     self.fileManager = fileManager
