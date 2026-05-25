@@ -486,7 +486,7 @@ package final class XcodeTestProject {
     withExtendedLifetime(self) { _ in }
   }
 
-  /// Write a minimal shared `.xcscheme` named `name` into `MyApp.xcodeproj/xcshareddata/xcschemes`,
+  /// Write a minimal shared `.xcscheme` named `name` into `<xcodeprojURL>/xcshareddata/xcschemes`,
   /// whose Build action references `buildTargetNames`. Returns the written scheme file URL.
   ///
   /// Only the `BlueprintName` attribute is meaningful to SourceKit-LSP's scheme parser; the other
@@ -496,25 +496,26 @@ package final class XcodeTestProject {
     let schemesDir = xcodeprojURL.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true)
     try fileManager.createDirectory(at: schemesDir, withIntermediateDirectories: true)
     let container = xcodeprojURL.lastPathComponent
-    let entries = buildTargetNames.map { target in
-      """
-            <BuildActionEntry buildForTesting="YES" buildForRunning="YES" buildForProfiling="YES" buildForArchiving="YES" buildForAnalyzing="YES">
-               <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="\(target)" BuildableName="\(target)" BlueprintName="\(target)" ReferencedContainer="container:\(container)"></BuildableReference>
-            </BuildActionEntry>
-      """
-    }.joined(separator: "\n")
-    let contents = """
-      <?xml version="1.0" encoding="UTF-8"?>
-      <Scheme LastUpgradeVersion="1500" version="1.7">
-         <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
-            <BuildActionEntries>
-      \(entries)
-            </BuildActionEntries>
-         </BuildAction>
-      </Scheme>
-      """
+    let entryLines: [String] = buildTargetNames.flatMap { target -> [String] in
+      [
+        "         <BuildActionEntry buildForTesting=\"YES\" buildForRunning=\"YES\" buildForProfiling=\"YES\" buildForArchiving=\"YES\" buildForAnalyzing=\"YES\">",
+        "            <BuildableReference BuildableIdentifier=\"primary\" BlueprintIdentifier=\"\(target)\" BuildableName=\"\(target)\" BlueprintName=\"\(target)\" ReferencedContainer=\"container:\(container)\"></BuildableReference>",
+        "         </BuildActionEntry>",
+      ]
+    }
+    let lines: [String] =
+      [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<Scheme LastUpgradeVersion=\"1500\" version=\"1.7\">",
+        "   <BuildAction parallelizeBuildables=\"YES\" buildImplicitDependencies=\"YES\">",
+        "      <BuildActionEntries>",
+      ] + entryLines + [
+        "      </BuildActionEntries>",
+        "   </BuildAction>",
+        "</Scheme>",
+      ]
     let url = schemesDir.appendingPathComponent("\(name).xcscheme", isDirectory: false)
-    try contents.write(to: url, atomically: true, encoding: .utf8)
+    try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
     return url
   }
 }
