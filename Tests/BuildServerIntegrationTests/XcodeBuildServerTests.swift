@@ -120,6 +120,52 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  // MARK: - resolveScheme decision logic
+
+  func testResolveSchemeMatchesNamedTargets() {
+    let targets = [
+      XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_Fw", name: "Framework", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_Other", name: "Other", platforms: ["macosx"]),
+    ]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "AppScheme",
+      schemeTargetNames: ["App"],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_App"]))
+  }
+
+  func testResolveSchemeFallsBackToSameNamedTargetWhenNoFile() {
+    let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "App",
+      schemeTargetNames: nil,
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_App"]))
+  }
+
+  func testResolveSchemeNotFoundWhenNoFileAndNoSameNamedTarget() {
+    let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "Ghost",
+      schemeTargetNames: nil,
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .fallbackNotFound)
+  }
+
+  func testResolveSchemeNoKnownTargetsWhenFileNamesDoNotMatch() {
+    let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "AppScheme",
+      schemeTargetNames: ["Vanished"],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .fallbackNoKnownTargets)
+  }
+
   private func temporaryDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcode-bs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
