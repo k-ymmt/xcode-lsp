@@ -334,6 +334,23 @@ private extension BuildServerSpec {
         logger.log("Created external SwiftPM build server at \(projectRoot)")
         return .external(buildServer)
       }
+    case .xcode:
+      #if !NO_SWIFTPM_DEPENDENCY
+      return await createBuiltInBuildServerAdapter(
+        messagesToSourceKitLSPHandler: messagesToSourceKitLSPHandler,
+        buildServerHooks: buildServerHooks
+      ) { connectionToSourceKitLSP in
+        try await XcodeBuildServer(
+          projectRoot: projectRoot,
+          containerPath: configPath,
+          toolchainRegistry: toolchainRegistry,
+          options: options,
+          connectionToSourceKitLSP: connectionToSourceKitLSP
+        )
+      }
+      #else
+      return nil
+      #endif
     case .injected(let injector):
       let connectionToSourceKitLSP = LocalConnection(
         receiverName: "BuildServerManager for \(projectRoot.lastPathComponent)",

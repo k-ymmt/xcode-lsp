@@ -77,7 +77,7 @@ package func determineBuildServer(
   }
 
   var buildServerPreference: [WorkspaceType] = [
-    .buildServer, .swiftPM, .compilationDatabase,
+    .buildServer, .xcode, .swiftPM, .compilationDatabase,
   ]
   if let defaultBuildServer = options.defaultWorkspaceType {
     buildServerPreference.removeAll(where: { $0 == defaultBuildServer })
@@ -103,8 +103,9 @@ package func determineBuildServer(
       spec = SwiftPMBuildServer.searchForConfig(in: workspaceFolderUrl, options: options)
       #endif
     case .xcode:
-      // TODO(Task 7): wire up XcodeBuildServer.searchForConfig here.
-      break
+      #if !NO_SWIFTPM_DEPENDENCY
+      spec = XcodeBuildServer.searchForConfig(in: workspaceFolderUrl, options: options)
+      #endif
     }
 
     if let spec {

@@ -28,6 +28,7 @@ package struct BuildServerSpec {
     case jsonCompilationDatabase
     case fixedCompilationDatabase
     case swiftPM(inferredBuildSystem: SwiftPMBuildSystem?)
+    case xcode
     case injected(
       @Sendable (_ projectRoot: URL, _ connectionToSourceKitLSP: any Connection) async -> any Connection
     )

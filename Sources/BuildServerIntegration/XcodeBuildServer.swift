@@ -178,4 +178,54 @@ package actor XcodeBuildServer: BuiltInBuildServer {
     return VoidResponse()
   }
 }
+
+extension XcodeBuildServer {
+  /// Look for an Xcode workspace/project in `path`. Prefers `.xcworkspace`, honors `options.xcode.container`.
+  static package func searchForConfig(in path: URL, options: SourceKitLSPOptions) -> BuildServerSpec? {
+    let fm = FileManager.default
+
+    if let container = options.xcodeOrDefault.container {
+      let url = path.appendingPathComponent(container)
+      if fm.fileExists(atPath: url.path) {
+        return BuildServerSpec(kind: .xcode, projectRoot: path, configPath: url)
+      }
+    }
+
+    guard let entries = try? fm.contentsOfDirectory(at: path, includingPropertiesForKeys: nil) else {
+      return nil
+    }
+    func pick(_ ext: String) -> URL? {
+      let matches = entries.filter { $0.pathExtension == ext }.sorted { $0.lastPathComponent < $1.lastPathComponent }
+      return matches.first(where: { $0.deletingPathExtension().lastPathComponent == path.lastPathComponent })
+        ?? matches.first
+    }
+    guard let container = pick("xcworkspace") ?? pick("xcodeproj") else {
+      return nil
+    }
+    guard xcodebuildIsAvailable() else {
+      logger.log("Found \(container.lastPathComponent) but xcodebuild is unavailable; skipping Xcode build server")
+      return nil
+    }
+    return BuildServerSpec(kind: .xcode, projectRoot: path, configPath: container)
+  }
+
+  private static func xcodebuildIsAvailable() -> Bool {
+    #if os(macOS)
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/xcrun")
+    process.arguments = ["--find", "xcodebuild"]
+    process.standardOutput = nil
+    process.standardError = nil
+    do {
+      try process.run()
+      process.waitUntilExit()
+      return process.terminationStatus == 0
+    } catch {
+      return false
+    }
+    #else
+    return false
+    #endif
+  }
+}
 #endif
