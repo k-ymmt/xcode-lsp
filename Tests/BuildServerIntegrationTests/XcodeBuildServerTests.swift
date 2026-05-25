@@ -136,6 +136,20 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertEqual(resolution, .seeds(["G_App"]))
   }
 
+  func testResolveSchemeMatchesMultipleNamedTargets() {
+    let targets = [
+      XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_Fw", name: "Framework", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_Other", name: "Other", platforms: ["macosx"]),
+    ]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "AppScheme",
+      schemeTargetNames: ["App", "Framework"],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_App", "G_Fw"]))
+  }
+
   func testResolveSchemeFallsBackToSameNamedTargetWhenNoFile() {
     let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
     let resolution = XcodeBuildServer.resolveScheme(

@@ -243,7 +243,8 @@ extension XcodeBuildServer {
   ///
   /// `package` so the pure decision can be unit-tested from `BuildServerIntegrationTests`.
   package enum SchemeResolution: Equatable {
-    /// Seed target GUIDs to expand via the dependency closure.
+    /// Seed target GUIDs to expand via the dependency closure. Order is not significant — callers
+    /// treat these as a set when computing the closure.
     case seeds([String])
     /// No scheme file and no same-named target — index all targets.
     case fallbackNotFound
