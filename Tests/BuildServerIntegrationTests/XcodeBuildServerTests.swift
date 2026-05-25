@@ -268,6 +268,54 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// A scheme that builds the `MyApp` target scopes the build server to that target.
+  func testSchemeScopesToBuildActionTargets() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    try project.writeSharedScheme(named: "MyAppScheme", buildTargetNames: ["MyApp"])
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "MyAppScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    XCTAssertEqual(
+      targetsResponse.targets.map(\.displayName),
+      ["MyApp"],
+      "scheme building only MyApp should scope the build server to MyApp"
+    )
+  }
+
+  /// An unknown scheme name (no file, no same-named target) falls back to indexing all targets.
+  func testUnknownSchemeFallsBackToAllTargets() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "DoesNotExist")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    XCTAssertTrue(
+      targetsResponse.targets.contains { $0.displayName == "MyApp" },
+      "unknown scheme should fall back to all targets (including MyApp)"
+    )
+  }
+
   /// Test 2: `prepare` runs an actual build that populates the index store directory on disk.
   func testPreparePopulatesIndexStore() async throws {
     try skipUnlessXcodeAvailable()
