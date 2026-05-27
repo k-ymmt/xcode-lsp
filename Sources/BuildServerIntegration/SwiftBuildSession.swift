@@ -184,6 +184,34 @@ package actor SwiftBuildSession {
     )
   }
 
+  /// Compute the direct-dependency adjacency list (including implicit dependencies) for the given
+  /// target GUIDs, as `targetGUID -> [direct dependency GUID]`. Used to populate `BuildTarget.dependencies`.
+  ///
+  /// Unlike `dependencyClosure(forTargetGUIDs:)`, which returns the transitive closure, this returns
+  /// only direct edges, matching BSP's "direct upstream build target dependencies" semantics. Implicit
+  /// dependencies are included so the BSP graph reflects the same edges SwiftBuild builds against. The
+  /// graph does not depend on the run destination, so build parameters set only the configuration.
+  ///
+  /// `computeDependencyGraph` takes `[SWBTargetGUID]` (hence the `rawValue` wrapping/unwrapping here),
+  /// whereas `computeDependencyClosure` takes `[String]` directly — an asymmetry in the SwiftBuild API.
+  package func dependencyGraph(forTargetGUIDs guids: [String]) async throws -> [String: [String]] {
+    guard !guids.isEmpty else {
+      return [:]
+    }
+    var params = SWBBuildParameters()
+    params.configurationName = configuration
+    let adjacency = try await session.computeDependencyGraph(
+      targetGUIDs: guids.map { SWBTargetGUID(rawValue: $0) },
+      buildParameters: params,
+      includeImplicitDependencies: true
+    )
+    var result: [String: [String]] = [:]
+    for (key, values) in adjacency {
+      result[key.rawValue] = values.map(\.rawValue)
+    }
+    return result
+  }
+
   /// Evaluate the target's `SUPPORTED_PLATFORMS` build setting (e.g. `["iphoneos", "iphonesimulator"]`).
   ///
   /// `SUPPORTED_PLATFORMS` does not depend on the active run destination, so this evaluates with build

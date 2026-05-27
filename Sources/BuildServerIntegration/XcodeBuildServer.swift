@@ -154,6 +154,8 @@ package actor XcodeBuildServer: BuiltInBuildServer {
   package func buildTargets(request: WorkspaceBuildTargetsRequest) async throws -> WorkspaceBuildTargetsResponse {
     let targets = try await allTargets()
     let rootPaths = rootProjectPaths()
+    let scopedGUIDs = Set(targets.map(\.guid))
+    let graph = try await session.dependencyGraph(forTargetGUIDs: targets.map(\.guid))
     let buildTargets = try targets.map { (target) -> BuildTarget in
       var tags: [BuildTargetTag] = []
       if target.isTestTarget {
@@ -169,7 +171,11 @@ package actor XcodeBuildServer: BuiltInBuildServer {
         capabilities: BuildTargetCapabilities(),
         // Be conservative with the languages that might be used in the target. SourceKit-LSP doesn't use this property.
         languageIds: [.c, .cpp, .objective_c, .objective_cpp, .swift],
-        dependencies: [],
+        dependencies: try Self.dependencyIdentifiers(
+          forTargetGUID: target.guid,
+          graph: graph,
+          scopedGUIDs: scopedGUIDs
+        ),
         dataKind: .sourceKit,
         // SwiftBuild resolves the toolchain internally, so no explicit toolchain URI is provided.
         data: SourceKitBuildTarget(toolchain: nil).encodeToLSPAny()

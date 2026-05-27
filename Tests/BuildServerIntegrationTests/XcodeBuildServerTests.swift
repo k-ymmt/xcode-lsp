@@ -595,6 +595,38 @@ final class XcodeBuildServerTests: XCTestCase {
     }
   }
 
+  /// `.appWithFrameworkDependency`'s App target depends on Framework, so App's BSP `dependencies`
+  /// includes Framework's identifier. Proves `computeDependencyGraph` is wired end-to-end.
+  func testDependenciesExposeFrameworkEdge() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithFrameworkDependency, sourceContents: "let x = 1\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let app = try XCTUnwrap(
+      response.targets.first { $0.displayName == "App" },
+      "expected App target, got \(response.targets.map(\.displayName))"
+    )
+    let framework = try XCTUnwrap(
+      response.targets.first { $0.displayName == "Framework" },
+      "expected Framework target, got \(response.targets.map(\.displayName))"
+    )
+    XCTAssertTrue(
+      app.dependencies.contains(framework.id),
+      "expected App.dependencies to include Framework, got \(app.dependencies)"
+    )
+  }
+
   /// Test 5: a unit-test target is tagged `.test` while a non-test target is not. This is what
   /// drives `mayContainTests`, and therefore SourceKit-LSP test discovery, for Xcode projects.
   func testTestTargetIsTaggedAsTest() async throws {
