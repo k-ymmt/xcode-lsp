@@ -152,8 +152,15 @@ package actor SwiftBuildSession {
     for targetInfo in info.targetInfos {
       let platforms = await supportedPlatforms(forTargetGUID: targetInfo.guid)
       let isTest = await isTestTarget(forTargetGUID: targetInfo.guid)
+      let projectFile = await projectFilePath(forTargetGUID: targetInfo.guid)
       result.append(
-        XcodeTarget(guid: targetInfo.guid, name: targetInfo.targetName, platforms: platforms, isTestTarget: isTest)
+        XcodeTarget(
+          guid: targetInfo.guid,
+          name: targetInfo.targetName,
+          platforms: platforms,
+          isTestTarget: isTest,
+          projectFilePath: projectFile
+        )
       )
     }
     return result
@@ -212,6 +219,30 @@ package actor SwiftBuildSession {
       )
     }
     return Self.isTestProductType(identifier ?? "")
+  }
+
+  /// Evaluate the target's `PROJECT_FILE_PATH` build setting: the absolute path of the `.xcodeproj`
+  /// that owns the target. Used to classify a target as part of the opened project vs. a dependency
+  /// (e.g. a SwiftPM package, whose project lives under `…/SourcePackages/…`).
+  ///
+  /// `PROJECT_FILE_PATH` does not depend on the active run destination, so this evaluates with build
+  /// parameters that set only the configuration. Returns `nil` on failure so the target is treated
+  /// conservatively as part of the root project.
+  private func projectFilePath(forTargetGUID guid: String) async -> URL? {
+    var params = SWBBuildParameters()
+    params.configurationName = configuration
+    let path = await orLog("Evaluating PROJECT_FILE_PATH for target \(guid)") {
+      try await session.evaluateMacroAsString(
+        "PROJECT_FILE_PATH",
+        level: .target(guid),
+        buildParameters: params,
+        overrides: [:]
+      )
+    }
+    guard let path, !path.isEmpty else {
+      return nil
+    }
+    return URL(fileURLWithPath: path)
   }
 
   // MARK: Indexing info

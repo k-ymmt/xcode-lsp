@@ -495,6 +495,38 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// A real target reports its owning `.xcodeproj` via `PROJECT_FILE_PATH`, proving the macro
+  /// evaluation that drives `.dependency` classification works end-to-end against real SwiftBuild.
+  func testTargetReportsOwningProjectFilePath() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+
+    let session = try await SwiftBuildSession(
+      containerPath: project.xcodeprojURL,
+      configuration: "Debug",
+      destinationOverride: nil,
+      derivedDataPath: project.projectRoot.appending(component: ".build").appending(component: "sk-xcode")
+    )
+    addTeardownBlock { await session.close() }
+
+    let targets = try await session.targets()
+    let target = try XCTUnwrap(
+      targets.first { $0.name == "MyApp" },
+      "expected a target named MyApp, got \(targets.map(\.name))"
+    )
+    let path = try XCTUnwrap(
+      target.projectFilePath,
+      "expected projectFilePath to be populated via PROJECT_FILE_PATH evaluation"
+    )
+    XCTAssertEqual(
+      path.lastPathComponent,
+      "MyApp.xcodeproj",
+      "expected owning project to be MyApp.xcodeproj, got \(path.path)"
+    )
+  }
+
   /// Test 4: an iOS target reports a simulator platform and, with no destination override, its indexing
   /// compiler arguments reference the iOS Simulator SDK — the direct regression test for the previous
   /// "always fall back to macOS" behavior.
