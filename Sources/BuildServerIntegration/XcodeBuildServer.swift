@@ -288,6 +288,25 @@ extension XcodeBuildServer {
     case fallbackNoKnownTargets
   }
 
+  /// Whether a target whose owning `.xcodeproj` is `projectFilePath` belongs to the project the user
+  /// opened (vs. a dependency such as a SwiftPM package, whose project lives outside the opened
+  /// container). A `nil` path (evaluation failed) is treated conservatively as part of the root
+  /// project so its sources are not wrongly excluded from project/test discovery.
+  ///
+  /// Paths are compared after symlink resolution. In production both `projectFilePath` (from
+  /// `PROJECT_FILE_PATH`) and the `rootProjectPaths` (from the opened container) refer to projects that
+  /// exist on disk, so the comparison is canonical.
+  package static func isPartOfRootProject(projectFilePath: URL?, rootProjectPaths: Set<URL>) -> Bool {
+    guard let projectFilePath else {
+      return true
+    }
+    func normalized(_ url: URL) -> String {
+      url.resolvingSymlinksInPath().path
+    }
+    let normalizedProjectPath = normalized(projectFilePath)
+    return rootProjectPaths.contains { normalized($0) == normalizedProjectPath }
+  }
+
   /// Decide which targets a scheme scopes to, purely from already-loaded data.
   ///
   /// - `schemeTargetNames`: Build-action target names from the `.xcscheme` file, or `nil` if no file

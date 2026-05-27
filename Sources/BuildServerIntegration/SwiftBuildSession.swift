@@ -30,14 +30,25 @@ package struct XcodeTarget: Sendable, Equatable {
   package var platforms: [String]
   /// Whether this target builds a test bundle (unit-test or UI-testing product type).
   package var isTestTarget: Bool
+  /// Absolute path of the `.xcodeproj` that owns this target (from `PROJECT_FILE_PATH`). `nil` if
+  /// the build setting could not be evaluated. Used to classify the target as part of the opened
+  /// project vs. a dependency (e.g. a SwiftPM package).
+  package var projectFilePath: URL?
 
-  // `isTestTarget` defaults to `false` so existing call sites that don't care about it (e.g. the
-  // `resolveScheme` unit tests in `XcodeBuildServerTests.swift`) compile unchanged.
-  package init(guid: String, name: String, platforms: [String], isTestTarget: Bool = false) {
+  // `isTestTarget` and `projectFilePath` default so existing call sites that don't care about them
+  // (e.g. the `resolveScheme` unit tests in `XcodeBuildServerTests.swift`) compile unchanged.
+  package init(
+    guid: String,
+    name: String,
+    platforms: [String],
+    isTestTarget: Bool = false,
+    projectFilePath: URL? = nil
+  ) {
     self.guid = guid
     self.name = name
     self.platforms = platforms
     self.isTestTarget = isTestTarget
+    self.projectFilePath = projectFilePath
   }
 }
 

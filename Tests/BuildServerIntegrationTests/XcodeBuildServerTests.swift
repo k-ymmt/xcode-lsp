@@ -202,6 +202,49 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertFalse(SwiftBuildSession.isTestProductType(""))
   }
 
+  // MARK: - isPartOfRootProject classification
+
+  func testRootProjectTargetIsPartOfRootProject() {
+    let container = URL(fileURLWithPath: "/proj/MyApp.xcodeproj")
+    XCTAssertTrue(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: container, rootProjectPaths: [container])
+    )
+  }
+
+  func testPackageDependencyTargetIsNotPartOfRootProject() {
+    let container = URL(fileURLWithPath: "/proj/MyApp.xcodeproj")
+    let package = URL(
+      fileURLWithPath: "/proj/.build/sourcekit-lsp-xcode/SourcePackages/checkouts/Pkg/Pkg.xcodeproj"
+    )
+    XCTAssertFalse(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: package, rootProjectPaths: [container])
+    )
+  }
+
+  func testNilProjectFilePathIsTreatedAsRootProject() {
+    let container = URL(fileURLWithPath: "/proj/MyApp.xcodeproj")
+    XCTAssertTrue(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: nil, rootProjectPaths: [container])
+    )
+  }
+
+  func testWorkspaceMemberProjectIsPartOfRootProject() {
+    let appProject = URL(fileURLWithPath: "/proj/AppA.xcodeproj")
+    let libProject = URL(fileURLWithPath: "/proj/LibB.xcodeproj")
+    XCTAssertTrue(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: libProject, rootProjectPaths: [appProject, libProject])
+    )
+  }
+
+  func testNonMemberProjectIsNotPartOfRootProjectAmongMultipleRoots() {
+    let appProject = URL(fileURLWithPath: "/proj/AppA.xcodeproj")
+    let otherProject = URL(fileURLWithPath: "/proj/OtherC.xcodeproj")
+    let package = URL(fileURLWithPath: "/proj/.build/SourcePackages/checkouts/Pkg/Pkg.xcodeproj")
+    XCTAssertFalse(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: package, rootProjectPaths: [appProject, otherProject])
+    )
+  }
+
   private func temporaryDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcode-bs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
