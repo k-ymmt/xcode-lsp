@@ -42,17 +42,20 @@ final class XcodeSchemeTests: XCTestCase {
   func testParsesBuildActionReferencesWithContainer() {
     let data = scheme(buildEntries: entry(blueprintName: "App") + "\n" + entry(blueprintName: "Framework"))
     XCTAssertEqual(
-      XcodeScheme.buildActionReferences(xcschemeContents: data),
+      XcodeScheme.schemeSeedReferences(xcschemeContents: data),
       [
         XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:MyApp.xcodeproj"),
-        XcodeScheme.SchemeBuildableReference(blueprintName: "Framework", referencedContainer: "container:MyApp.xcodeproj"),
+        XcodeScheme.SchemeBuildableReference(
+          blueprintName: "Framework",
+          referencedContainer: "container:MyApp.xcodeproj"
+        ),
       ]
     )
   }
 
   func testEmptyBuildActionReturnsEmpty() {
     let data = scheme(buildEntries: "")
-    XCTAssertEqual(XcodeScheme.buildActionReferences(xcschemeContents: data), [])
+    XCTAssertEqual(XcodeScheme.schemeSeedReferences(xcschemeContents: data), [])
   }
 
   func testDeduplicatesByNameAndContainer() {
@@ -62,7 +65,7 @@ final class XcodeSchemeTests: XCTestCase {
         + entry(blueprintName: "App", container: "Other.xcodeproj")
     )
     XCTAssertEqual(
-      XcodeScheme.buildActionReferences(xcschemeContents: data),
+      XcodeScheme.schemeSeedReferences(xcschemeContents: data),
       [
         XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:MyApp.xcodeproj"),
         XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:Other.xcodeproj"),
@@ -82,7 +85,7 @@ final class XcodeSchemeTests: XCTestCase {
       """
     let data = scheme(buildEntries: entry(blueprintName: "App"), extraActions: testAction)
     XCTAssertEqual(
-      XcodeScheme.buildActionReferences(xcschemeContents: data),
+      XcodeScheme.schemeSeedReferences(xcschemeContents: data),
       [XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:MyApp.xcodeproj")]
     )
   }

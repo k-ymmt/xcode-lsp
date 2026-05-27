@@ -61,7 +61,7 @@ package enum XcodeScheme {
       return nil
     }
     let baseDir = container.deletingLastPathComponent()
-    return buildActionReferences(xcschemeContents: data).map { reference in
+    return schemeSeedReferences(xcschemeContents: data).map { reference in
       SchemeBuildTarget(
         blueprintName: reference.blueprintName,
         container: resolveContainer(reference.referencedContainer, relativeTo: baseDir)
@@ -112,12 +112,12 @@ package enum XcodeScheme {
     return nil
   }
 
-  /// Extract the `BuildableReference`s (name + `ReferencedContainer`) referenced by a scheme's
-  /// `BuildAction`. References in `TestAction`/`LaunchAction`/etc. are ignored. De-duplicated by
+  /// Extract every `BuildableReference` (name + `ReferencedContainer`) the scheme uses as a build seed:
+  /// those nested under the scheme's `BuildAction`, `TestAction`, or `LaunchAction`. De-duplicated by
   /// (name, container) pair, preserving order.
-  package static func buildActionReferences(xcschemeContents: Data) -> [SchemeBuildableReference] {
+  package static func schemeSeedReferences(xcschemeContents: Data) -> [SchemeBuildableReference] {
     let parser = XMLParser(data: xcschemeContents)
-    let delegate = BuildActionDelegate()
+    let delegate = SchemeReferenceDelegate()
     parser.delegate = delegate
     parser.parse()
     var seen = Set<SchemeBuildableReference>()
@@ -143,7 +143,7 @@ package enum XcodeScheme {
   }
 }
 
-private final class BuildActionDelegate: NSObject, XMLParserDelegate {
+private final class SchemeReferenceDelegate: NSObject, XMLParserDelegate {
   var references: [XcodeScheme.SchemeBuildableReference] = []
   private var inBuildAction = false
 
