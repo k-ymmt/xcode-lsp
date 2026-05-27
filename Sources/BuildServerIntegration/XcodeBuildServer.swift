@@ -135,14 +135,37 @@ package actor XcodeBuildServer: BuiltInBuildServer {
     indexingFilesByTarget = [:]
   }
 
+  /// The set of `.xcodeproj` paths considered part of the project the user opened: the container itself
+  /// for an `.xcodeproj`, or the member `.xcodeproj`s directly under `projectRoot` for an `.xcworkspace`.
+  /// A target whose owning project is outside this set (e.g. a SwiftPM package) is tagged `.dependency`.
+  private func rootProjectPaths() -> Set<URL> {
+    if containerPath.pathExtension == "xcworkspace" {
+      let entries =
+        orLog("Enumerating member projects under \(projectRoot.path)") {
+          try FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil)
+        } ?? []
+      return Set(entries.filter { $0.pathExtension == "xcodeproj" })
+    }
+    return [containerPath]
+  }
+
   // MARK: BuiltInBuildServer
 
   package func buildTargets(request: WorkspaceBuildTargetsRequest) async throws -> WorkspaceBuildTargetsResponse {
-    let targets = try await allTargets().asyncMap { (target) -> BuildTarget in
+    let targets = try await allTargets()
+    let rootPaths = rootProjectPaths()
+    let buildTargets = try targets.map { (target) -> BuildTarget in
+      var tags: [BuildTargetTag] = []
+      if target.isTestTarget {
+        tags.append(.test)
+      }
+      if !Self.isPartOfRootProject(projectFilePath: target.projectFilePath, rootProjectPaths: rootPaths) {
+        tags.append(.dependency)
+      }
       return BuildTarget(
         id: try BuildTargetIdentifier.createXcode(targetGUID: target.guid),
         displayName: target.name,
-        tags: target.isTestTarget ? [.test] : [],
+        tags: tags,
         capabilities: BuildTargetCapabilities(),
         // Be conservative with the languages that might be used in the target. SourceKit-LSP doesn't use this property.
         languageIds: [.c, .cpp, .objective_c, .objective_cpp, .swift],
@@ -152,7 +175,7 @@ package actor XcodeBuildServer: BuiltInBuildServer {
         data: SourceKitBuildTarget(toolchain: nil).encodeToLSPAny()
       )
     }
-    return WorkspaceBuildTargetsResponse(targets: targets)
+    return WorkspaceBuildTargetsResponse(targets: buildTargets)
   }
 
   package func buildTargetSources(request: BuildTargetSourcesRequest) async throws -> BuildTargetSourcesResponse {

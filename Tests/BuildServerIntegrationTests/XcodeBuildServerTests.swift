@@ -566,6 +566,35 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// Both targets of `.appWithFrameworkDependency` live in the opened `MyApp.xcodeproj`, so neither
+  /// is tagged `.dependency`. Also proves `PROJECT_FILE_PATH` classification is wired into buildTargets.
+  /// The positive counterpart — a SwiftPM package target that IS tagged `.dependency` — is covered by
+  /// `testPackageDependencyTargetIsTaggedDependency`.
+  func testInProjectTargetsAreNotTaggedDependency() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithFrameworkDependency, sourceContents: "let x = 1\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    XCTAssertFalse(response.targets.isEmpty, "expected at least one target")
+    for target in response.targets {
+      XCTAssertFalse(
+        target.tags.contains(.dependency),
+        "expected in-project target \(target.displayName ?? "?") to NOT be tagged .dependency, got \(target.tags)"
+      )
+    }
+  }
+
   /// Test 5: a unit-test target is tagged `.test` while a non-test target is not. This is what
   /// drives `mayContainTests`, and therefore SourceKit-LSP test discovery, for Xcode projects.
   func testTestTargetIsTaggedAsTest() async throws {
