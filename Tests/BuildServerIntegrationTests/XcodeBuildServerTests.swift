@@ -459,5 +459,41 @@ final class XcodeBuildServerTests: XCTestCase {
       "expected iOS Simulator SDK/target in compiler arguments, got: \(args)"
     )
   }
+
+  /// Test 5: a unit-test target is tagged `.test` while a non-test target is not. This is what
+  /// drives `mayContainTests`, and therefore SourceKit-LSP test discovery, for Xcode projects.
+  func testTestTargetIsTaggedAsTest() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithUnitTestTarget, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let testTarget = try XCTUnwrap(
+      response.targets.first { $0.displayName == "MyAppTests" },
+      "expected a MyAppTests target, got: \(response.targets.map(\.displayName))"
+    )
+    let appTarget = try XCTUnwrap(
+      response.targets.first { $0.displayName == "MyApp" },
+      "expected a MyApp target, got: \(response.targets.map(\.displayName))"
+    )
+    XCTAssertTrue(
+      testTarget.tags.contains(.test),
+      "expected MyAppTests to be tagged .test, got tags: \(testTarget.tags)"
+    )
+    XCTAssertFalse(
+      appTarget.tags.contains(.test),
+      "expected MyApp (non-test) to have no .test tag, got tags: \(appTarget.tags)"
+    )
+  }
   #endif
 }
