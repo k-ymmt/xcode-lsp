@@ -52,6 +52,16 @@ package enum XcodeWorkspace {
     return URL(fileURLWithPath: (baseDir as NSString).appendingPathComponent(path)).standardizedFileURL
   }
 
+  /// Member `.xcodeproj`s declared in `workspaceURL`'s `contents.xcworkspacedata`, fully resolved. Returns
+  /// `nil` when the file is absent or unreadable, so callers can fall back to a top-level directory scan.
+  package static func memberProjects(workspaceURL: URL) -> [URL]? {
+    let dataURL = workspaceURL.appendingPathComponent("contents.xcworkspacedata", isDirectory: false)
+    guard let data = try? Data(contentsOf: dataURL) else {
+      return nil
+    }
+    return projectReferences(xcworkspacedataContents: data, baseDir: workspaceURL.deletingLastPathComponent())
+  }
+
   /// Parse `contents.xcworkspacedata` XML and return every member `.xcodeproj`, fully resolved relative to
   /// `baseDir` (the directory containing the `.xcworkspace`). Recurses into nested `<Group>`s, accumulating
   /// their location prefixes. De-duplicated by resolved path, preserving document order.

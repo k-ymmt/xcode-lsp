@@ -167,5 +167,63 @@ final class XcodeWorkspaceTests: XCTestCase {
     XCTAssertEqual(XcodeWorkspace.projectReferences(xcworkspacedataContents: data("not xml <<<"), baseDir: base), [])
     XCTAssertEqual(XcodeWorkspace.projectReferences(xcworkspacedataContents: Data(), baseDir: base), [])
   }
+
+  // MARK: - memberProjects
+
+  private func makeTempDir() throws -> URL {
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcworkspace-\(UUID().uuidString)")
+    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+    addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+    return dir
+  }
+
+  func testMemberProjectsReadsWorkspacedata() throws {
+    let dir = try makeTempDir()
+    let workspace = dir.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    let xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Workspace version = "1.0">
+         <Group location = "group:Modules">
+            <FileRef location = "group:MyLib/MyLib.xcodeproj"></FileRef>
+         </Group>
+         <FileRef location = "group:MyApp.xcodeproj"></FileRef>
+      </Workspace>
+      """
+    try (xml + "\n").write(
+      to: workspace.appendingPathComponent("contents.xcworkspacedata", isDirectory: false),
+      atomically: true,
+      encoding: .utf8
+    )
+    let members = try XCTUnwrap(XcodeWorkspace.memberProjects(workspaceURL: workspace)).map(\.path)
+    XCTAssertEqual(
+      Set(members),
+      Set([
+        dir.appendingPathComponent("Modules/MyLib/MyLib.xcodeproj").standardizedFileURL.path,
+        dir.appendingPathComponent("MyApp.xcodeproj").standardizedFileURL.path,
+      ])
+    )
+  }
+
+  func testMemberProjectsNilWhenFileMissing() throws {
+    let dir = try makeTempDir()
+    let workspace = dir.appendingPathComponent("Empty.xcworkspace", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    XCTAssertNil(XcodeWorkspace.memberProjects(workspaceURL: workspace))
+  }
+
+  func testMemberProjectsEmptyArrayWhenFileExistsButGarbage() throws {
+    // A present-but-unparseable contents.xcworkspacedata yields [] (not nil): the file exists, so callers
+    // should not fall back to a top-level scan.
+    let dir = try makeTempDir()
+    let workspace = dir.appendingPathComponent("Garbage.xcworkspace", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    try "not xml <<<".write(
+      to: workspace.appendingPathComponent("contents.xcworkspacedata", isDirectory: false),
+      atomically: true,
+      encoding: .utf8
+    )
+    XCTAssertEqual(XcodeWorkspace.memberProjects(workspaceURL: workspace), [])
+  }
   #endif
 }
