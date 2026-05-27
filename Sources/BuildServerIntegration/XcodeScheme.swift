@@ -70,14 +70,17 @@ package enum XcodeScheme {
     }
   }
 
-  /// Containers to search for scheme files: the container itself, plus (for a workspace) member
-  /// `.xcodeproj`s directly under `projectRoot`.
+  /// Containers to search for scheme files: the container itself, plus (for a workspace) the member
+  /// `.xcodeproj`s declared in its `contents.xcworkspacedata` (falling back to a top-level scan of
+  /// `projectRoot` if that file is absent or unreadable).
   private static func searchContainers(containerPath: URL, projectRoot: URL) -> [URL] {
     var containers = [containerPath]
-    if containerPath.pathExtension == "xcworkspace",
-      let entries = try? FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil)
-    {
-      containers.append(contentsOf: entries.filter { $0.pathExtension == "xcodeproj" }.sorted { $0.path < $1.path })
+    if containerPath.pathExtension == "xcworkspace" {
+      let members =
+        XcodeWorkspace.memberProjects(workspaceURL: containerPath)
+        ?? ((try? FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil))?
+          .filter { $0.pathExtension == "xcodeproj" } ?? [])
+      containers.append(contentsOf: members.sorted { $0.path < $1.path })
     }
     return containers
   }
