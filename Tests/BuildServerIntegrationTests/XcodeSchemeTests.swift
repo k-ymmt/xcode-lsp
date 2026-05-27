@@ -152,5 +152,22 @@ final class XcodeSchemeTests: XCTestCase {
       ["MemberTarget"]
     )
   }
+
+  // MARK: - resolveContainer
+
+  func testResolveContainerResolvesRelativeToBaseDir() {
+    let base = URL(fileURLWithPath: "/ws", isDirectory: true)
+    XCTAssertEqual(
+      XcodeScheme.resolveContainer("container:AppA/AppA.xcodeproj", relativeTo: base)?.path,
+      "/ws/AppA/AppA.xcodeproj"
+    )
+  }
+
+  func testResolveContainerReturnsNilForNilOrNonContainerPrefix() {
+    let base = URL(fileURLWithPath: "/ws", isDirectory: true)
+    XCTAssertNil(XcodeScheme.resolveContainer(nil, relativeTo: base))
+    XCTAssertNil(XcodeScheme.resolveContainer("AppA.xcodeproj", relativeTo: base))
+    XCTAssertNil(XcodeScheme.resolveContainer("container:", relativeTo: base))
+  }
   #endif
 }

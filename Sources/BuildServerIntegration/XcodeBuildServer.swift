@@ -329,11 +329,14 @@ extension XcodeBuildServer {
     guard let projectFilePath else {
       return true
     }
-    func normalized(_ url: URL) -> String {
-      url.resolvingSymlinksInPath().path
-    }
-    let normalizedProjectPath = normalized(projectFilePath)
-    return rootProjectPaths.contains { normalized($0) == normalizedProjectPath }
+    let normalizedProjectPath = normalizedPath(projectFilePath)
+    return rootProjectPaths.contains { normalizedPath($0) == normalizedProjectPath }
+  }
+
+  /// Canonical path of `url` for on-disk equality comparison (resolves symlinks). Shared by
+  /// `isPartOfRootProject` and `resolveScheme`'s container matching.
+  package static func normalizedPath(_ url: URL) -> String {
+    url.resolvingSymlinksInPath().path
   }
 
   /// The BSP identifiers of `guid`'s direct dependencies, restricted to targets in `scopedGUIDs` so we

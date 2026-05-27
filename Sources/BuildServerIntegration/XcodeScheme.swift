@@ -86,6 +86,24 @@ package enum XcodeScheme {
     var seen = Set<String>()
     return delegate.names.filter { seen.insert($0).inserted }
   }
+
+  /// Resolve a scheme `BuildableReference`'s `ReferencedContainer` (e.g. `container:AppA/AppA.xcodeproj`)
+  /// to an absolute `.xcodeproj` URL, relative to `baseDir` (the directory holding the container that owns
+  /// the scheme file). Returns `nil` when the attribute is absent, not `container:`-prefixed, or empty —
+  /// callers then fall back to matching by target name alone.
+  ///
+  /// Uses `standardizedFileURL` (resolves `.`/`..` but not symlinks) so the result stays comparable to the
+  /// caller-supplied `baseDir`; symlink canonicalization happens later in `XcodeBuildServer.resolveScheme`.
+  package static func resolveContainer(_ referencedContainer: String?, relativeTo baseDir: URL) -> URL? {
+    guard let raw = referencedContainer, raw.hasPrefix("container:") else {
+      return nil
+    }
+    let relativePath = String(raw.dropFirst("container:".count))
+    guard !relativePath.isEmpty else {
+      return nil
+    }
+    return URL(fileURLWithPath: relativePath, relativeTo: baseDir).standardizedFileURL
+  }
 }
 
 private final class BuildActionDelegate: NSObject, XMLParserDelegate {
