@@ -74,7 +74,8 @@ package actor XcodeBuildServer: BuiltInBuildServer {
   // MARK: Caching
 
   /// All in-scope targets, cached after first load. When `xcode.scheme` is set, this is the scheme's
-  /// Build-action targets plus their dependency closure; otherwise it is every workspace target.
+  /// Build / Test / Launch action targets plus their dependency closure; otherwise it is every workspace
+  /// target.
   private func allTargets() async throws -> [XcodeTarget] {
     if let cachedTargets {
       return cachedTargets
