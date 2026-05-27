@@ -846,5 +846,43 @@ final class XcodeBuildServerTests: XCTestCase {
       ])
     )
   }
+
+  /// Real SwiftBuild integration: every project in `.workspaceWithNestedProject` (the root MyApp.xcodeproj
+  /// and the subdirectory Modules/App/App.xcodeproj) is a workspace member, so no target may be tagged
+  /// `.dependency`. Before parsing contents.xcworkspacedata, rootProjectPaths() globbed only the top level
+  /// and missed the subdir project, mis-tagging its target as a dependency.
+  func testWorkspaceMemberInSubdirectoryNotTaggedAsDependency() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .workspaceWithNestedProject, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+
+    let workspaceURL = try XCTUnwrap(project.workspaceURL)
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: workspaceURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let dependencyTargets = targetsResponse.targets.filter { $0.tags.contains(.dependency) }
+    XCTAssertTrue(
+      dependencyTargets.isEmpty,
+      "no workspace member should be tagged .dependency, got: \(dependencyTargets.map(\.displayName))"
+    )
+
+    // Sanity: the subdirectory project actually loaded (its sources are present).
+    let sourcesResponse = try await buildServer.buildTargetSources(
+      request: BuildTargetSourcesRequest(targets: targetsResponse.targets.map(\.id))
+    )
+    let sourcePaths = sourcesResponse.items.flatMap(\.sources).compactMap { $0.uri.fileURL?.path }
+    XCTAssertTrue(
+      sourcePaths.contains { $0.contains("/Modules/App/") },
+      "expected the subdirectory member project's sources to be present, got: \(sourcePaths)"
+    )
+  }
   #endif
 }

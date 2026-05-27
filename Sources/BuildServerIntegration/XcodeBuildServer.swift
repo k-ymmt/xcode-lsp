@@ -137,10 +137,14 @@ package actor XcodeBuildServer: BuiltInBuildServer {
   }
 
   /// The set of `.xcodeproj` paths considered part of the project the user opened: the container itself
-  /// for an `.xcodeproj`, or the member `.xcodeproj`s directly under `projectRoot` for an `.xcworkspace`.
+  /// for an `.xcodeproj`, or the member `.xcodeproj`s declared in its `contents.xcworkspacedata` for an `.xcworkspace`.
   /// A target whose owning project is outside this set (e.g. a SwiftPM package) is tagged `.dependency`.
   private func rootProjectPaths() -> Set<URL> {
     if containerPath.pathExtension == "xcworkspace" {
+      if let members = XcodeWorkspace.memberProjects(workspaceURL: containerPath) {
+        return Set(members)
+      }
+      // Fallback when contents.xcworkspacedata is absent/unreadable: previous top-level scan behavior.
       let entries =
         orLog("Enumerating member projects under \(projectRoot.path)") {
           try FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil)
