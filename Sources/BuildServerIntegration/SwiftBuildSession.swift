@@ -30,14 +30,25 @@ package struct XcodeTarget: Sendable, Equatable {
   package var platforms: [String]
   /// Whether this target builds a test bundle (unit-test or UI-testing product type).
   package var isTestTarget: Bool
+  /// Absolute path of the `.xcodeproj` that owns this target (from `PROJECT_FILE_PATH`). `nil` if
+  /// the build setting could not be evaluated. Used to classify the target as part of the opened
+  /// project vs. a dependency (e.g. a SwiftPM package).
+  package var projectFilePath: URL?
 
-  // `isTestTarget` defaults to `false` so existing call sites that don't care about it (e.g. the
-  // `resolveScheme` unit tests in `XcodeBuildServerTests.swift`) compile unchanged.
-  package init(guid: String, name: String, platforms: [String], isTestTarget: Bool = false) {
+  // `isTestTarget` and `projectFilePath` default so existing call sites that don't care about them
+  // (e.g. the `resolveScheme` unit tests in `XcodeBuildServerTests.swift`) compile unchanged.
+  package init(
+    guid: String,
+    name: String,
+    platforms: [String],
+    isTestTarget: Bool = false,
+    projectFilePath: URL? = nil
+  ) {
     self.guid = guid
     self.name = name
     self.platforms = platforms
     self.isTestTarget = isTestTarget
+    self.projectFilePath = projectFilePath
   }
 }
 
@@ -141,8 +152,15 @@ package actor SwiftBuildSession {
     for targetInfo in info.targetInfos {
       let platforms = await supportedPlatforms(forTargetGUID: targetInfo.guid)
       let isTest = await isTestTarget(forTargetGUID: targetInfo.guid)
+      let projectFile = await projectFilePath(forTargetGUID: targetInfo.guid)
       result.append(
-        XcodeTarget(guid: targetInfo.guid, name: targetInfo.targetName, platforms: platforms, isTestTarget: isTest)
+        XcodeTarget(
+          guid: targetInfo.guid,
+          name: targetInfo.targetName,
+          platforms: platforms,
+          isTestTarget: isTest,
+          projectFilePath: projectFile
+        )
       )
     }
     return result
@@ -164,6 +182,34 @@ package actor SwiftBuildSession {
       buildParameters: params,
       includeImplicitDependencies: true
     )
+  }
+
+  /// Compute the direct-dependency adjacency list (including implicit dependencies) for the given
+  /// target GUIDs, as `targetGUID -> [direct dependency GUID]`. Used to populate `BuildTarget.dependencies`.
+  ///
+  /// Unlike `dependencyClosure(forTargetGUIDs:)`, which returns the transitive closure, this returns
+  /// only direct edges, matching BSP's "direct upstream build target dependencies" semantics. Implicit
+  /// dependencies are included so the BSP graph reflects the same edges SwiftBuild builds against. The
+  /// graph does not depend on the run destination, so build parameters set only the configuration.
+  ///
+  /// `computeDependencyGraph` takes `[SWBTargetGUID]` (hence the `rawValue` wrapping/unwrapping here),
+  /// whereas `computeDependencyClosure` takes `[String]` directly — an asymmetry in the SwiftBuild API.
+  package func dependencyGraph(forTargetGUIDs guids: [String]) async throws -> [String: [String]] {
+    guard !guids.isEmpty else {
+      return [:]
+    }
+    var params = SWBBuildParameters()
+    params.configurationName = configuration
+    let adjacency = try await session.computeDependencyGraph(
+      targetGUIDs: guids.map { SWBTargetGUID(rawValue: $0) },
+      buildParameters: params,
+      includeImplicitDependencies: true
+    )
+    var result: [String: [String]] = [:]
+    for (key, values) in adjacency {
+      result[key.rawValue] = values.map(\.rawValue)
+    }
+    return result
   }
 
   /// Evaluate the target's `SUPPORTED_PLATFORMS` build setting (e.g. `["iphoneos", "iphonesimulator"]`).
@@ -201,6 +247,30 @@ package actor SwiftBuildSession {
       )
     }
     return Self.isTestProductType(identifier ?? "")
+  }
+
+  /// Evaluate the target's `PROJECT_FILE_PATH` build setting: the absolute path of the `.xcodeproj`
+  /// that owns the target. Used to classify a target as part of the opened project vs. a dependency
+  /// (e.g. a SwiftPM package, whose project lives under `…/SourcePackages/…`).
+  ///
+  /// `PROJECT_FILE_PATH` does not depend on the active run destination, so this evaluates with build
+  /// parameters that set only the configuration. Returns `nil` on failure so the target is treated
+  /// conservatively as part of the root project.
+  private func projectFilePath(forTargetGUID guid: String) async -> URL? {
+    var params = SWBBuildParameters()
+    params.configurationName = configuration
+    let path = await orLog("Evaluating PROJECT_FILE_PATH for target \(guid)") {
+      try await session.evaluateMacroAsString(
+        "PROJECT_FILE_PATH",
+        level: .target(guid),
+        buildParameters: params,
+        overrides: [:]
+      )
+    }
+    guard let path, !path.isEmpty else {
+      return nil
+    }
+    return URL(fileURLWithPath: path)
   }
 
   // MARK: Indexing info

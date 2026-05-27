@@ -135,24 +135,53 @@ package actor XcodeBuildServer: BuiltInBuildServer {
     indexingFilesByTarget = [:]
   }
 
+  /// The set of `.xcodeproj` paths considered part of the project the user opened: the container itself
+  /// for an `.xcodeproj`, or the member `.xcodeproj`s directly under `projectRoot` for an `.xcworkspace`.
+  /// A target whose owning project is outside this set (e.g. a SwiftPM package) is tagged `.dependency`.
+  private func rootProjectPaths() -> Set<URL> {
+    if containerPath.pathExtension == "xcworkspace" {
+      let entries =
+        orLog("Enumerating member projects under \(projectRoot.path)") {
+          try FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil)
+        } ?? []
+      return Set(entries.filter { $0.pathExtension == "xcodeproj" })
+    }
+    return [containerPath]
+  }
+
   // MARK: BuiltInBuildServer
 
   package func buildTargets(request: WorkspaceBuildTargetsRequest) async throws -> WorkspaceBuildTargetsResponse {
-    let targets = try await allTargets().asyncMap { (target) -> BuildTarget in
+    let targets = try await allTargets()
+    let rootPaths = rootProjectPaths()
+    let scopedGUIDs = Set(targets.map(\.guid))
+    let graph = try await session.dependencyGraph(forTargetGUIDs: targets.map(\.guid))
+    let buildTargets = try targets.map { (target) -> BuildTarget in
+      var tags: [BuildTargetTag] = []
+      if target.isTestTarget {
+        tags.append(.test)
+      }
+      if !Self.isPartOfRootProject(projectFilePath: target.projectFilePath, rootProjectPaths: rootPaths) {
+        tags.append(.dependency)
+      }
       return BuildTarget(
         id: try BuildTargetIdentifier.createXcode(targetGUID: target.guid),
         displayName: target.name,
-        tags: target.isTestTarget ? [.test] : [],
+        tags: tags,
         capabilities: BuildTargetCapabilities(),
         // Be conservative with the languages that might be used in the target. SourceKit-LSP doesn't use this property.
         languageIds: [.c, .cpp, .objective_c, .objective_cpp, .swift],
-        dependencies: [],
+        dependencies: try Self.dependencyIdentifiers(
+          forTargetGUID: target.guid,
+          graph: graph,
+          scopedGUIDs: scopedGUIDs
+        ),
         dataKind: .sourceKit,
         // SwiftBuild resolves the toolchain internally, so no explicit toolchain URI is provided.
         data: SourceKitBuildTarget(toolchain: nil).encodeToLSPAny()
       )
     }
-    return WorkspaceBuildTargetsResponse(targets: targets)
+    return WorkspaceBuildTargetsResponse(targets: buildTargets)
   }
 
   package func buildTargetSources(request: BuildTargetSourcesRequest) async throws -> BuildTargetSourcesResponse {
@@ -286,6 +315,37 @@ extension XcodeBuildServer {
     case fallbackNotFound
     /// A scheme file was found but none of its targets exist in the workspace — index all targets.
     case fallbackNoKnownTargets
+  }
+
+  /// Whether a target whose owning `.xcodeproj` is `projectFilePath` belongs to the project the user
+  /// opened (vs. a dependency such as a SwiftPM package, whose project lives outside the opened
+  /// container). A `nil` path (evaluation failed) is treated conservatively as part of the root
+  /// project so its sources are not wrongly excluded from project/test discovery.
+  ///
+  /// Paths are compared after symlink resolution. In production both `projectFilePath` (from
+  /// `PROJECT_FILE_PATH`) and the `rootProjectPaths` (from the opened container) refer to projects that
+  /// exist on disk, so the comparison is canonical.
+  package static func isPartOfRootProject(projectFilePath: URL?, rootProjectPaths: Set<URL>) -> Bool {
+    guard let projectFilePath else {
+      return true
+    }
+    func normalized(_ url: URL) -> String {
+      url.resolvingSymlinksInPath().path
+    }
+    let normalizedProjectPath = normalized(projectFilePath)
+    return rootProjectPaths.contains { normalized($0) == normalizedProjectPath }
+  }
+
+  /// The BSP identifiers of `guid`'s direct dependencies, restricted to targets in `scopedGUIDs` so we
+  /// never reference a target outside the build server's target list (e.g. when a scheme has scoped the
+  /// workspace to a subset). Sorted by GUID for deterministic output.
+  package static func dependencyIdentifiers(
+    forTargetGUID guid: String,
+    graph: [String: [String]],
+    scopedGUIDs: Set<String>
+  ) throws -> [BuildTargetIdentifier] {
+    let direct = (graph[guid] ?? []).filter { scopedGUIDs.contains($0) }.sorted()
+    return try direct.map { try BuildTargetIdentifier.createXcode(targetGUID: $0) }
   }
 
   /// Decide which targets a scheme scopes to, purely from already-loaded data.

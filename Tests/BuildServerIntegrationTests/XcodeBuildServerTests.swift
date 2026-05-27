@@ -202,6 +202,80 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertFalse(SwiftBuildSession.isTestProductType(""))
   }
 
+  // MARK: - isPartOfRootProject classification
+
+  func testRootProjectTargetIsPartOfRootProject() {
+    let container = URL(fileURLWithPath: "/proj/MyApp.xcodeproj")
+    XCTAssertTrue(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: container, rootProjectPaths: [container])
+    )
+  }
+
+  func testPackageDependencyTargetIsNotPartOfRootProject() {
+    let container = URL(fileURLWithPath: "/proj/MyApp.xcodeproj")
+    let package = URL(
+      fileURLWithPath: "/proj/.build/sourcekit-lsp-xcode/SourcePackages/checkouts/Pkg/Pkg.xcodeproj"
+    )
+    XCTAssertFalse(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: package, rootProjectPaths: [container])
+    )
+  }
+
+  func testNilProjectFilePathIsTreatedAsRootProject() {
+    let container = URL(fileURLWithPath: "/proj/MyApp.xcodeproj")
+    XCTAssertTrue(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: nil, rootProjectPaths: [container])
+    )
+  }
+
+  func testWorkspaceMemberProjectIsPartOfRootProject() {
+    let appProject = URL(fileURLWithPath: "/proj/AppA.xcodeproj")
+    let libProject = URL(fileURLWithPath: "/proj/LibB.xcodeproj")
+    XCTAssertTrue(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: libProject, rootProjectPaths: [appProject, libProject])
+    )
+  }
+
+  func testNonMemberProjectIsNotPartOfRootProjectAmongMultipleRoots() {
+    let appProject = URL(fileURLWithPath: "/proj/AppA.xcodeproj")
+    let otherProject = URL(fileURLWithPath: "/proj/OtherC.xcodeproj")
+    let package = URL(fileURLWithPath: "/proj/.build/SourcePackages/checkouts/Pkg/Pkg.xcodeproj")
+    XCTAssertFalse(
+      XcodeBuildServer.isPartOfRootProject(projectFilePath: package, rootProjectPaths: [appProject, otherProject])
+    )
+  }
+
+  // MARK: - dependencyIdentifiers
+
+  func testDependencyIdentifiersFiltersOutOfScopeGUIDs() throws {
+    let graph = ["G_App": ["G_Fw", "G_External"]]
+    let ids = try XcodeBuildServer.dependencyIdentifiers(
+      forTargetGUID: "G_App",
+      graph: graph,
+      scopedGUIDs: ["G_App", "G_Fw"]
+    )
+    XCTAssertEqual(try ids.map { try $0.xcodeTargetGUID }, ["G_Fw"])
+  }
+
+  func testDependencyIdentifiersAreSortedForDeterminism() throws {
+    let graph = ["G_App": ["G_Z", "G_A"]]
+    let ids = try XcodeBuildServer.dependencyIdentifiers(
+      forTargetGUID: "G_App",
+      graph: graph,
+      scopedGUIDs: ["G_A", "G_Z"]
+    )
+    XCTAssertEqual(try ids.map { try $0.xcodeTargetGUID }, ["G_A", "G_Z"])
+  }
+
+  func testDependencyIdentifiersEmptyWhenNoEntry() throws {
+    let ids = try XcodeBuildServer.dependencyIdentifiers(
+      forTargetGUID: "G_Unknown",
+      graph: [:],
+      scopedGUIDs: ["G_App"]
+    )
+    XCTAssertTrue(ids.isEmpty)
+  }
+
   private func temporaryDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcode-bs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -421,6 +495,38 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// A real target reports its owning `.xcodeproj` via `PROJECT_FILE_PATH`, proving the macro
+  /// evaluation that drives `.dependency` classification works end-to-end against real SwiftBuild.
+  func testTargetReportsOwningProjectFilePath() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+
+    let session = try await SwiftBuildSession(
+      containerPath: project.xcodeprojURL,
+      configuration: "Debug",
+      destinationOverride: nil,
+      derivedDataPath: project.projectRoot.appending(component: ".build").appending(component: "sk-xcode")
+    )
+    addTeardownBlock { await session.close() }
+
+    let targets = try await session.targets()
+    let target = try XCTUnwrap(
+      targets.first { $0.name == "MyApp" },
+      "expected a target named MyApp, got \(targets.map(\.name))"
+    )
+    let path = try XCTUnwrap(
+      target.projectFilePath,
+      "expected projectFilePath to be populated via PROJECT_FILE_PATH evaluation"
+    )
+    XCTAssertEqual(
+      path.lastPathComponent,
+      "MyApp.xcodeproj",
+      "expected owning project to be MyApp.xcodeproj, got \(path.path)"
+    )
+  }
+
   /// Test 4: an iOS target reports a simulator platform and, with no destination override, its indexing
   /// compiler arguments reference the iOS Simulator SDK — the direct regression test for the previous
   /// "always fall back to macOS" behavior.
@@ -457,6 +563,104 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertTrue(
       mentionsIOSSimulator,
       "expected iOS Simulator SDK/target in compiler arguments, got: \(args)"
+    )
+  }
+
+  /// Both targets of `.appWithFrameworkDependency` live in the opened `MyApp.xcodeproj`, so neither
+  /// is tagged `.dependency`. Also proves `PROJECT_FILE_PATH` classification is wired into buildTargets.
+  /// The positive counterpart — a SwiftPM package target that IS tagged `.dependency` — is covered by
+  /// `testPackageDependencyTargetIsTaggedDependency`.
+  func testInProjectTargetsAreNotTaggedDependency() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithFrameworkDependency, sourceContents: "let x = 1\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    XCTAssertFalse(response.targets.isEmpty, "expected at least one target")
+    for target in response.targets {
+      XCTAssertFalse(
+        target.tags.contains(.dependency),
+        "expected in-project target \(target.displayName ?? "?") to NOT be tagged .dependency, got \(target.tags)"
+      )
+    }
+  }
+
+  /// `.appWithFrameworkDependency`'s App target depends on Framework, so App's BSP `dependencies`
+  /// includes Framework's identifier. Proves `computeDependencyGraph` is wired end-to-end.
+  func testDependenciesExposeFrameworkEdge() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithFrameworkDependency, sourceContents: "let x = 1\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let app = try XCTUnwrap(
+      response.targets.first { $0.displayName == "App" },
+      "expected App target, got \(response.targets.map(\.displayName))"
+    )
+    let framework = try XCTUnwrap(
+      response.targets.first { $0.displayName == "Framework" },
+      "expected Framework target, got \(response.targets.map(\.displayName))"
+    )
+    XCTAssertTrue(
+      app.dependencies.contains(framework.id),
+      "expected App.dependencies to include Framework, got \(app.dependencies)"
+    )
+  }
+
+  /// A target built from a SwiftPM package dependency (`MyLib`) is tagged `.dependency`, while the
+  /// opened project's own target (`MyApp`) is not. This is the direct regression test for gap #4.
+  func testPackageDependencyTargetIsTaggedDependency() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithPackageDependency, sourceContents: "import MyLib\nlet x = 1\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = response.targets.map { $0.displayName ?? "?" }
+    let packageTarget = try XCTUnwrap(
+      response.targets.first { $0.displayName == "MyLib" },
+      "expected a MyLib package-product target, got \(names)"
+    )
+    let appTarget = try XCTUnwrap(
+      response.targets.first { $0.displayName == "MyApp" },
+      "expected a MyApp target, got \(names)"
+    )
+    XCTAssertTrue(
+      packageTarget.tags.contains(.dependency),
+      "expected MyLib (SwiftPM package) to be tagged .dependency, got \(packageTarget.tags)"
+    )
+    XCTAssertFalse(
+      appTarget.tags.contains(.dependency),
+      "expected MyApp (root project) to NOT be tagged .dependency, got \(appTarget.tags)"
     )
   }
 
