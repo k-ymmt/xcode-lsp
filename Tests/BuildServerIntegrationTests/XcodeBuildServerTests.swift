@@ -827,5 +827,24 @@ final class XcodeBuildServerTests: XCTestCase {
       "expected MyApp (non-test) to have no .test tag, got tags: \(appTarget.tags)"
     )
   }
+
+  /// The `.workspaceWithNestedProject` fixture writes a contents.xcworkspacedata that references its root
+  /// project directly and its subdirectory project through a nested `<Group>`. This validates the fixture
+  /// and `XcodeWorkspace.memberProjects` together, without needing Xcode.
+  func testNestedWorkspaceFixtureMemberProjects() throws {
+    let project = try XcodeTestProject(kind: .workspaceWithNestedProject, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    let workspaceURL = try XCTUnwrap(project.workspaceURL)
+    let members = Set(
+      try XCTUnwrap(XcodeWorkspace.memberProjects(workspaceURL: workspaceURL)).map { $0.standardizedFileURL.path }
+    )
+    XCTAssertEqual(
+      members,
+      Set([
+        project.projectRoot.appendingPathComponent("MyApp.xcodeproj").standardizedFileURL.path,
+        project.projectRoot.appendingPathComponent("Modules/App/App.xcodeproj").standardizedFileURL.path,
+      ])
+    )
+  }
   #endif
 }
