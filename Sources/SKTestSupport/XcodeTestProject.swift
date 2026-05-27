@@ -22,7 +22,8 @@ package import Foundation
 /// and a unit-test bundle `MyAppTests` (`com.apple.product-type.bundle.unit-test`, with
 /// `MyAppTests/MyAppTests.swift`). `.appWithPackageDependency` produces a macOS command-line tool `MyApp`
 /// (with `main.swift`) that depends on a local SwiftPM package `MyPackage` exposing the library product
-/// `MyLib`.
+/// `MyLib`. `.workspaceWithDuplicateTargetNames` produces a `.xcworkspace` bundling two sibling-subdir
+/// `.xcodeproj`s (`AppA/AppA.xcodeproj`, `AppB/AppB.xcodeproj`), each with a target named `App`.
 ///
 /// The temporary directory is removed when the `XcodeTestProject` is deinitialized, unless the
 /// `SOURCEKIT_LSP_KEEP_TEST_SCRATCH_DIR` environment variable is set.
@@ -39,6 +40,10 @@ package final class XcodeTestProject {
   /// `.macOSCommandLineTool`, `.iOSApp`, `.appWithUnitTestTarget`, and `.appWithPackageDependency` this is
   /// `main.swift` at the project root; for `.appWithFrameworkDependency` it is `App/main.swift`.
   package let sourceFileURL: URL
+
+  /// For `.workspaceWithDuplicateTargetNames`, the `.xcworkspace` container path; `nil` otherwise.
+  /// Used as the base directory for ``writeWorkspaceSharedScheme(named:buildTargets:)``.
+  package let workspaceURL: URL?
 
   private let fileManager: FileManager
 
@@ -57,6 +62,10 @@ package final class XcodeTestProject {
     /// A macOS command-line tool `MyApp` (with `main.swift` importing `MyLib`) that depends on a local
     /// SwiftPM package `MyPackage` exposing a library product `MyLib`. Exercises `.dependency` tagging.
     case appWithPackageDependency
+    /// A `.xcworkspace` bundling two sibling-subdir `.xcodeproj`s (`AppA/AppA.xcodeproj`,
+    /// `AppB/AppB.xcodeproj`), each with a target named `App`. Exercises scheme container
+    /// disambiguation: a workspace-shared scheme `App` references only `AppA/AppA.xcodeproj`.
+    case workspaceWithDuplicateTargetNames
   }
 
   /// The validated `project.pbxproj` template for a macOS command-line tool target named `MyApp` with a single
@@ -1238,6 +1247,391 @@ package final class XcodeTestProject {
 
 """
 
+  /// The validated `project.pbxproj` template for a macOS command-line tool target named `App` with a single
+  /// `main.swift` source file. Derived from ``pbxprojTemplate`` with every occurrence of `MyApp` replaced by `App`.
+  /// Used as the `AppA` project in the `.workspaceWithDuplicateTargetNames` fixture.
+  ///
+  /// Validated with xcodebuild -list / -dumpPIF / plutil -lint on Xcode 26.4.
+  ///
+  /// - Important: The leading indentation of the lines below uses tabs, matching what Xcode writes. The closing
+  ///   delimiter of the multi-line string literal is placed at column zero so that Swift does not strip the leading
+  ///   tabs from the embedded content.
+  // swift-format-ignore
+  package static let duplicateTargetAppATemplate: String = """
+// !$*UTF8*$!
+{
+\tarchiveVersion = 1;
+\tclasses = {
+\t};
+\tobjectVersion = 56;
+\tobjects = {
+
+/* Begin PBXBuildFile section */
+\t\tA100000000000000000000B1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A1 /* main.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+\t\tA100000000000000000000A1 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+\t\tA100000000000000000000A2 /* App */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = App; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+\t\tA100000000000000000000C1 /* Frameworks */ = {
+\t\t\tisa = PBXFrameworksBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+\t\tA100000000000000000000D1 = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tA100000000000000000000A1 /* main.swift */,
+\t\t\t\tA100000000000000000000D2 /* Products */,
+\t\t\t);
+\t\t\tsourceTree = "<group>";
+\t\t};
+\t\tA100000000000000000000D2 /* Products */ = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tA100000000000000000000A2 /* App */,
+\t\t\t);
+\t\t\tname = Products;
+\t\t\tsourceTree = "<group>";
+\t\t};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+\t\tA100000000000000000000E1 /* App */ = {
+\t\t\tisa = PBXNativeTarget;
+\t\t\tbuildConfigurationList = A100000000000000000000F1 /* Build configuration list for PBXNativeTarget "App" */;
+\t\t\tbuildPhases = (
+\t\t\t\tA100000000000000000000C2 /* Sources */,
+\t\t\t\tA100000000000000000000C1 /* Frameworks */,
+\t\t\t);
+\t\t\tbuildRules = (
+\t\t\t);
+\t\t\tdependencies = (
+\t\t\t);
+\t\t\tname = App;
+\t\t\tproductName = App;
+\t\t\tproductReference = A100000000000000000000A2 /* App */;
+\t\t\tproductType = "com.apple.product-type.tool";
+\t\t};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+\t\tA100000000000000000000B0 /* Project object */ = {
+\t\t\tisa = PBXProject;
+\t\t\tattributes = {
+\t\t\t\tBuildIndependentTargetsInParallel = 1;
+\t\t\t\tLastSwiftUpdateCheck = 2640;
+\t\t\t\tLastUpgradeCheck = 2640;
+\t\t\t\tTargetAttributes = {
+\t\t\t\t\tA100000000000000000000E1 = {
+\t\t\t\t\t\tCreatedOnToolsVersion = 26.4;
+\t\t\t\t\t};
+\t\t\t\t};
+\t\t\t};
+\t\t\tbuildConfigurationList = A100000000000000000000F0 /* Build configuration list for PBXProject "App" */;
+\t\t\tcompatibilityVersion = "Xcode 14.0";
+\t\t\tdevelopmentRegion = en;
+\t\t\thasScannedForEncodings = 0;
+\t\t\tknownRegions = (
+\t\t\t\ten,
+\t\t\t\tBase,
+\t\t\t);
+\t\t\tmainGroup = A100000000000000000000D1;
+\t\t\tproductRefGroup = A100000000000000000000D2 /* Products */;
+\t\t\tprojectDirPath = "";
+\t\t\tprojectRoot = "";
+\t\t\ttargets = (
+\t\t\t\tA100000000000000000000E1 /* App */,
+\t\t\t);
+\t\t};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+\t\tA100000000000000000000C2 /* Sources */ = {
+\t\t\tisa = PBXSourcesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t\tA100000000000000000000B1 /* main.swift in Sources */,
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+\t\tA100000000000000000000F2 /* Debug */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;
+\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;
+\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;
+\t\t\t\tGCC_NO_COMMON_BLOCKS = YES;
+\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;
+\t\t\t\tONLY_ACTIVE_ARCH = YES;
+\t\t\t\tSDKROOT = macosx;
+\t\t\t\tSWIFT_OPTIMIZATION_LEVEL = "-Onone";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Debug;
+\t\t};
+\t\tA100000000000000000000F3 /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;
+\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;
+\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;
+\t\t\t\tGCC_NO_COMMON_BLOCKS = YES;
+\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;
+\t\t\t\tSDKROOT = macosx;
+\t\t\t\tSWIFT_COMPILATION_MODE = wholemodule;
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+\t\tA100000000000000000000F4 /* Debug */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Debug;
+\t\t};
+\t\tA100000000000000000000F5 /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+\t\tA100000000000000000000F0 /* Build configuration list for PBXProject "App" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\tA100000000000000000000F2 /* Debug */,
+\t\t\t\tA100000000000000000000F3 /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+\t\tA100000000000000000000F1 /* Build configuration list for PBXNativeTarget "App" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\tA100000000000000000000F4 /* Debug */,
+\t\t\t\tA100000000000000000000F5 /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+/* End XCConfigurationList section */
+\t};
+\trootObject = A100000000000000000000B0 /* Project object */;
+}
+
+"""
+
+  /// The validated `project.pbxproj` template for a macOS command-line tool target named `App` with a single
+  /// `main.swift` source file. Derived from ``duplicateTargetAppATemplate`` with every object-ID prefix `A1`
+  /// replaced by `B2` to avoid PIF GUID collisions. Used as the `AppB` project in the
+  /// `.workspaceWithDuplicateTargetNames` fixture.
+  ///
+  /// Validated with xcodebuild -list / -dumpPIF / plutil -lint on Xcode 26.4.
+  ///
+  /// - Important: The leading indentation of the lines below uses tabs, matching what Xcode writes. The closing
+  ///   delimiter of the multi-line string literal is placed at column zero so that Swift does not strip the leading
+  ///   tabs from the embedded content.
+  // swift-format-ignore
+  package static let duplicateTargetAppBTemplate: String = """
+// !$*UTF8*$!
+{
+\tarchiveVersion = 1;
+\tclasses = {
+\t};
+\tobjectVersion = 56;
+\tobjects = {
+
+/* Begin PBXBuildFile section */
+\t\tB200000000000000000000B1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000000000000000000A1 /* main.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+\t\tB200000000000000000000A1 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+\t\tB200000000000000000000A2 /* App */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = App; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+\t\tB200000000000000000000C1 /* Frameworks */ = {
+\t\t\tisa = PBXFrameworksBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+\t\tB200000000000000000000D1 = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tB200000000000000000000A1 /* main.swift */,
+\t\t\t\tB200000000000000000000D2 /* Products */,
+\t\t\t);
+\t\t\tsourceTree = "<group>";
+\t\t};
+\t\tB200000000000000000000D2 /* Products */ = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tB200000000000000000000A2 /* App */,
+\t\t\t);
+\t\t\tname = Products;
+\t\t\tsourceTree = "<group>";
+\t\t};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+\t\tB200000000000000000000E1 /* App */ = {
+\t\t\tisa = PBXNativeTarget;
+\t\t\tbuildConfigurationList = B200000000000000000000F1 /* Build configuration list for PBXNativeTarget "App" */;
+\t\t\tbuildPhases = (
+\t\t\t\tB200000000000000000000C2 /* Sources */,
+\t\t\t\tB200000000000000000000C1 /* Frameworks */,
+\t\t\t);
+\t\t\tbuildRules = (
+\t\t\t);
+\t\t\tdependencies = (
+\t\t\t);
+\t\t\tname = App;
+\t\t\tproductName = App;
+\t\t\tproductReference = B200000000000000000000A2 /* App */;
+\t\t\tproductType = "com.apple.product-type.tool";
+\t\t};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+\t\tB200000000000000000000B0 /* Project object */ = {
+\t\t\tisa = PBXProject;
+\t\t\tattributes = {
+\t\t\t\tBuildIndependentTargetsInParallel = 1;
+\t\t\t\tLastSwiftUpdateCheck = 2640;
+\t\t\t\tLastUpgradeCheck = 2640;
+\t\t\t\tTargetAttributes = {
+\t\t\t\t\tB200000000000000000000E1 = {
+\t\t\t\t\t\tCreatedOnToolsVersion = 26.4;
+\t\t\t\t\t};
+\t\t\t\t};
+\t\t\t};
+\t\t\tbuildConfigurationList = B200000000000000000000F0 /* Build configuration list for PBXProject "App" */;
+\t\t\tcompatibilityVersion = "Xcode 14.0";
+\t\t\tdevelopmentRegion = en;
+\t\t\thasScannedForEncodings = 0;
+\t\t\tknownRegions = (
+\t\t\t\ten,
+\t\t\t\tBase,
+\t\t\t);
+\t\t\tmainGroup = B200000000000000000000D1;
+\t\t\tproductRefGroup = B200000000000000000000D2 /* Products */;
+\t\t\tprojectDirPath = "";
+\t\t\tprojectRoot = "";
+\t\t\ttargets = (
+\t\t\t\tB200000000000000000000E1 /* App */,
+\t\t\t);
+\t\t};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+\t\tB200000000000000000000C2 /* Sources */ = {
+\t\t\tisa = PBXSourcesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t\tB200000000000000000000B1 /* main.swift in Sources */,
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+\t\tB200000000000000000000F2 /* Debug */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;
+\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;
+\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;
+\t\t\t\tGCC_NO_COMMON_BLOCKS = YES;
+\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;
+\t\t\t\tONLY_ACTIVE_ARCH = YES;
+\t\t\t\tSDKROOT = macosx;
+\t\t\t\tSWIFT_OPTIMIZATION_LEVEL = "-Onone";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Debug;
+\t\t};
+\t\tB200000000000000000000F3 /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;
+\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;
+\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;
+\t\t\t\tGCC_NO_COMMON_BLOCKS = YES;
+\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;
+\t\t\t\tSDKROOT = macosx;
+\t\t\t\tSWIFT_COMPILATION_MODE = wholemodule;
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+\t\tB200000000000000000000F4 /* Debug */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Debug;
+\t\t};
+\t\tB200000000000000000000F5 /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+\t\tB200000000000000000000F0 /* Build configuration list for PBXProject "App" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\tB200000000000000000000F2 /* Debug */,
+\t\t\t\tB200000000000000000000F3 /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+\t\tB200000000000000000000F1 /* Build configuration list for PBXNativeTarget "App" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\tB200000000000000000000F4 /* Debug */,
+\t\t\t\tB200000000000000000000F5 /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+/* End XCConfigurationList section */
+\t};
+\trootObject = B200000000000000000000B0 /* Project object */;
+}
+
+"""
+
   /// Creates a minimal Xcode project on disk in a fresh temporary directory.
   ///
   /// - Parameters:
@@ -1261,10 +1655,21 @@ package final class XcodeTestProject {
     try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
 
     self.projectRoot = root
-    self.xcodeprojURL = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+
+    // For `.workspaceWithDuplicateTargetNames`, the canonical xcodeproj is AppA/AppA.xcodeproj and the
+    // workspace is MyWorkspace.xcworkspace. All other kinds use MyApp.xcodeproj at the project root.
+    switch kind {
+    case .workspaceWithDuplicateTargetNames:
+      self.xcodeprojURL = root.appendingPathComponent("AppA/AppA.xcodeproj", isDirectory: true)
+      self.workspaceURL = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
+    default:
+      self.xcodeprojURL = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+      self.workspaceURL = nil
+    }
 
     // The `.appWithFrameworkDependency` project references its sources under per-target subdirectories
-    // (`App/main.swift` and `Framework/Framework.swift`); every other kind keeps `main.swift` at the project root.
+    // (`App/main.swift` and `Framework/Framework.swift`); `.workspaceWithDuplicateTargetNames` puts
+    // the primary source in `AppA/main.swift`; every other kind keeps `main.swift` at the project root.
     switch kind {
     case .macOSCommandLineTool, .iOSApp, .appWithUnitTestTarget, .appWithPackageDependency:
       self.sourceFileURL = root.appendingPathComponent("main.swift", isDirectory: false)
@@ -1273,79 +1678,126 @@ package final class XcodeTestProject {
         root
         .appendingPathComponent("App", isDirectory: true)
         .appendingPathComponent("main.swift", isDirectory: false)
-    }
-
-    try fileManager.createDirectory(at: xcodeprojURL, withIntermediateDirectories: true)
-    let template: String
-    switch kind {
-    case .macOSCommandLineTool: template = Self.pbxprojTemplate
-    case .iOSApp: template = Self.iOSAppPbxprojTemplate
-    case .appWithFrameworkDependency: template = Self.appWithFrameworkPbxprojTemplate
-    case .appWithUnitTestTarget: template = Self.appWithUnitTestPbxprojTemplate
-    case .appWithPackageDependency: template = Self.appWithPackageDependencyPbxprojTemplate
-    }
-    try template.write(
-      to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
-      atomically: true,
-      encoding: .utf8
-    )
-
-    try fileManager.createDirectory(
-      at: sourceFileURL.deletingLastPathComponent(),
-      withIntermediateDirectories: true
-    )
-    try sourceContents.write(to: sourceFileURL, atomically: true, encoding: .utf8)
-
-    if case .appWithFrameworkDependency = kind {
-      let frameworkSourceURL =
+    case .workspaceWithDuplicateTargetNames:
+      self.sourceFileURL =
         root
-        .appendingPathComponent("Framework", isDirectory: true)
-        .appendingPathComponent("Framework.swift", isDirectory: false)
-      try fileManager.createDirectory(
-        at: frameworkSourceURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      try "public func frameworkEntry() {}\n".write(to: frameworkSourceURL, atomically: true, encoding: .utf8)
+        .appendingPathComponent("AppA", isDirectory: true)
+        .appendingPathComponent("main.swift", isDirectory: false)
     }
 
-    if case .appWithUnitTestTarget = kind {
-      let testSourceURL =
-        root
-        .appendingPathComponent("MyAppTests", isDirectory: true)
-        .appendingPathComponent("MyAppTests.swift", isDirectory: false)
-      try fileManager.createDirectory(
-        at: testSourceURL.deletingLastPathComponent(),
-        withIntermediateDirectories: true
-      )
-      try "import XCTest\n\nfinal class MyAppTests: XCTestCase {\n  func testExample() throws {}\n}\n"
-        .write(to: testSourceURL, atomically: true, encoding: .utf8)
-    }
-
-    if case .appWithPackageDependency = kind {
-      let packageRoot = root.appendingPathComponent("MyPackage", isDirectory: true)
-      let libSourceDir = packageRoot.appendingPathComponent("Sources/MyLib", isDirectory: true)
-      try fileManager.createDirectory(at: libSourceDir, withIntermediateDirectories: true)
-      try """
-      // swift-tools-version:5.9
-      import PackageDescription
-
-      let package = Package(
-        name: "MyPackage",
-        products: [.library(name: "MyLib", targets: ["MyLib"])],
-        targets: [.target(name: "MyLib")]
-      )
-      """
-      .write(
-        to: packageRoot.appendingPathComponent("Package.swift", isDirectory: false),
+    // Single-project generation (skipped for workspace kinds which write two projects separately below).
+    if kind != .workspaceWithDuplicateTargetNames {
+      try fileManager.createDirectory(at: xcodeprojURL, withIntermediateDirectories: true)
+      let template: String
+      switch kind {
+      case .macOSCommandLineTool: template = Self.pbxprojTemplate
+      case .iOSApp: template = Self.iOSAppPbxprojTemplate
+      case .appWithFrameworkDependency: template = Self.appWithFrameworkPbxprojTemplate
+      case .appWithUnitTestTarget: template = Self.appWithUnitTestPbxprojTemplate
+      case .appWithPackageDependency: template = Self.appWithPackageDependencyPbxprojTemplate
+      case .workspaceWithDuplicateTargetNames:
+        // Unreachable: excluded by the enclosing `if kind != .workspaceWithDuplicateTargetNames`.
+        // This arm exists only to keep the switch exhaustive; workspace projects are generated below.
+        preconditionFailure("workspaceWithDuplicateTargetNames is generated separately, not via the single-project template")
+      }
+      try template.write(
+        to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
         atomically: true,
         encoding: .utf8
       )
-      try "public func myLibEntry() {}\n"
+
+      try fileManager.createDirectory(
+        at: sourceFileURL.deletingLastPathComponent(),
+        withIntermediateDirectories: true
+      )
+      try sourceContents.write(to: sourceFileURL, atomically: true, encoding: .utf8)
+
+      if case .appWithFrameworkDependency = kind {
+        let frameworkSourceURL =
+          root
+          .appendingPathComponent("Framework", isDirectory: true)
+          .appendingPathComponent("Framework.swift", isDirectory: false)
+        try fileManager.createDirectory(
+          at: frameworkSourceURL.deletingLastPathComponent(),
+          withIntermediateDirectories: true
+        )
+        try "public func frameworkEntry() {}\n".write(to: frameworkSourceURL, atomically: true, encoding: .utf8)
+      }
+
+      if case .appWithUnitTestTarget = kind {
+        let testSourceURL =
+          root
+          .appendingPathComponent("MyAppTests", isDirectory: true)
+          .appendingPathComponent("MyAppTests.swift", isDirectory: false)
+        try fileManager.createDirectory(
+          at: testSourceURL.deletingLastPathComponent(),
+          withIntermediateDirectories: true
+        )
+        try "import XCTest\n\nfinal class MyAppTests: XCTestCase {\n  func testExample() throws {}\n}\n"
+          .write(to: testSourceURL, atomically: true, encoding: .utf8)
+      }
+
+      if case .appWithPackageDependency = kind {
+        let packageRoot = root.appendingPathComponent("MyPackage", isDirectory: true)
+        let libSourceDir = packageRoot.appendingPathComponent("Sources/MyLib", isDirectory: true)
+        try fileManager.createDirectory(at: libSourceDir, withIntermediateDirectories: true)
+        try """
+        // swift-tools-version:5.9
+        import PackageDescription
+
+        let package = Package(
+          name: "MyPackage",
+          products: [.library(name: "MyLib", targets: ["MyLib"])],
+          targets: [.target(name: "MyLib")]
+        )
+        """
         .write(
-          to: libSourceDir.appendingPathComponent("MyLib.swift", isDirectory: false),
+          to: packageRoot.appendingPathComponent("Package.swift", isDirectory: false),
           atomically: true,
           encoding: .utf8
         )
+        try "public func myLibEntry() {}\n"
+          .write(
+            to: libSourceDir.appendingPathComponent("MyLib.swift", isDirectory: false),
+            atomically: true,
+            encoding: .utf8
+          )
+      }
+    }
+
+    if case .workspaceWithDuplicateTargetNames = kind {
+      for (subdir, template) in [
+        ("AppA", Self.duplicateTargetAppATemplate),
+        ("AppB", Self.duplicateTargetAppBTemplate),
+      ] {
+        let projDir = root.appendingPathComponent(subdir, isDirectory: true)
+        let xcodeproj = projDir.appendingPathComponent("\(subdir).xcodeproj", isDirectory: true)
+        try fileManager.createDirectory(at: xcodeproj, withIntermediateDirectories: true)
+        try template.write(
+          to: xcodeproj.appendingPathComponent("project.pbxproj", isDirectory: false),
+          atomically: true,
+          encoding: .utf8
+        )
+        try sourceContents.write(
+          to: projDir.appendingPathComponent("main.swift", isDirectory: false),
+          atomically: true,
+          encoding: .utf8
+        )
+      }
+      let workspace = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
+      try fileManager.createDirectory(at: workspace, withIntermediateDirectories: true)
+      let contents = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <Workspace version = "1.0">
+           <FileRef location = "group:AppA/AppA.xcodeproj"></FileRef>
+           <FileRef location = "group:AppB/AppB.xcodeproj"></FileRef>
+        </Workspace>
+        """
+      try (contents + "\n").write(
+        to: workspace.appendingPathComponent("contents.xcworkspacedata", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
     }
   }
 
@@ -1375,6 +1827,42 @@ package final class XcodeTestProject {
       [
         "         <BuildActionEntry buildForTesting=\"YES\" buildForRunning=\"YES\" buildForProfiling=\"YES\" buildForArchiving=\"YES\" buildForAnalyzing=\"YES\">",
         "            <BuildableReference BuildableIdentifier=\"primary\" BlueprintIdentifier=\"\(target)\" BuildableName=\"\(target)\" BlueprintName=\"\(target)\" ReferencedContainer=\"container:\(container)\"></BuildableReference>",
+        "         </BuildActionEntry>",
+      ]
+    }
+    let lines: [String] =
+      [
+        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
+        "<Scheme LastUpgradeVersion=\"1500\" version=\"1.7\">",
+        "   <BuildAction parallelizeBuildables=\"YES\" buildImplicitDependencies=\"YES\">",
+        "      <BuildActionEntries>",
+      ] + entryLines + [
+        "      </BuildActionEntries>",
+        "   </BuildAction>",
+        "</Scheme>",
+      ]
+    let url = schemesDir.appendingPathComponent("\(name).xcscheme", isDirectory: false)
+    try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
+    return url
+  }
+
+  /// Write a workspace-level shared `.xcscheme` named `name` into `<workspaceURL>/xcshareddata/xcschemes`,
+  /// whose Build action references each `(blueprintName, container)` pair. `container` is the `container:`
+  /// relative path (e.g. `AppA/AppA.xcodeproj`). Requires `workspaceURL` to be set.
+  @discardableResult
+  package func writeWorkspaceSharedScheme(named name: String, buildTargets: [(blueprintName: String, container: String)]) throws -> URL {
+    struct NotAWorkspaceError: Error, CustomStringConvertible {
+      var description: String { "writeWorkspaceSharedScheme requires workspaceURL to be non-nil (only set for workspace kinds)" }
+    }
+    guard let workspaceURL else {
+      throw NotAWorkspaceError()
+    }
+    let schemesDir = workspaceURL.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true)
+    try fileManager.createDirectory(at: schemesDir, withIntermediateDirectories: true)
+    let entryLines: [String] = buildTargets.flatMap { target -> [String] in
+      [
+        "         <BuildActionEntry buildForTesting=\"YES\" buildForRunning=\"YES\" buildForProfiling=\"YES\" buildForArchiving=\"YES\" buildForAnalyzing=\"YES\">",
+        "            <BuildableReference BuildableIdentifier=\"primary\" BlueprintIdentifier=\"\(target.blueprintName)\" BuildableName=\"\(target.blueprintName)\" BlueprintName=\"\(target.blueprintName)\" ReferencedContainer=\"container:\(target.container)\"></BuildableReference>",
         "         </BuildActionEntry>",
       ]
     }

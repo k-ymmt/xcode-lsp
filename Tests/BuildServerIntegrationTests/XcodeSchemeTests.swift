@@ -31,31 +31,46 @@ final class XcodeSchemeTests: XCTestCase {
     return Data(xml.utf8)
   }
 
-  private func entry(blueprintName: String) -> String {
+  private func entry(blueprintName: String, container: String = "MyApp.xcodeproj") -> String {
     """
           <BuildActionEntry buildForRunning="YES">
-             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="\(blueprintName)" BuildableName="\(blueprintName)" BlueprintName="\(blueprintName)" ReferencedContainer="container:MyApp.xcodeproj"></BuildableReference>
+             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="\(blueprintName)" BuildableName="\(blueprintName)" BlueprintName="\(blueprintName)" ReferencedContainer="container:\(container)"></BuildableReference>
           </BuildActionEntry>
     """
   }
 
-  func testParsesMultipleBuildActionTargetNames() {
+  func testParsesBuildActionReferencesWithContainer() {
     let data = scheme(buildEntries: entry(blueprintName: "App") + "\n" + entry(blueprintName: "Framework"))
-    XCTAssertEqual(XcodeScheme.buildActionTargetNames(xcschemeContents: data), ["App", "Framework"])
+    XCTAssertEqual(
+      XcodeScheme.buildActionReferences(xcschemeContents: data),
+      [
+        XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:MyApp.xcodeproj"),
+        XcodeScheme.SchemeBuildableReference(blueprintName: "Framework", referencedContainer: "container:MyApp.xcodeproj"),
+      ]
+    )
   }
 
   func testEmptyBuildActionReturnsEmpty() {
     let data = scheme(buildEntries: "")
-    XCTAssertEqual(XcodeScheme.buildActionTargetNames(xcschemeContents: data), [])
+    XCTAssertEqual(XcodeScheme.buildActionReferences(xcschemeContents: data), [])
   }
 
-  func testDeduplicatesNames() {
-    let data = scheme(buildEntries: entry(blueprintName: "App") + "\n" + entry(blueprintName: "App"))
-    XCTAssertEqual(XcodeScheme.buildActionTargetNames(xcschemeContents: data), ["App"])
+  func testDeduplicatesByNameAndContainer() {
+    // Same name + same container collapses to one; same name + different container stays distinct.
+    let data = scheme(
+      buildEntries: entry(blueprintName: "App") + "\n" + entry(blueprintName: "App") + "\n"
+        + entry(blueprintName: "App", container: "Other.xcodeproj")
+    )
+    XCTAssertEqual(
+      XcodeScheme.buildActionReferences(xcschemeContents: data),
+      [
+        XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:MyApp.xcodeproj"),
+        XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:Other.xcodeproj"),
+      ]
+    )
   }
 
   func testIgnoresBuildableReferencesOutsideBuildAction() {
-    // A TestAction BuildableReference must NOT be picked up.
     let testAction = """
          <TestAction buildConfiguration="Debug">
             <Testables>
@@ -66,7 +81,10 @@ final class XcodeSchemeTests: XCTestCase {
          </TestAction>
       """
     let data = scheme(buildEntries: entry(blueprintName: "App"), extraActions: testAction)
-    XCTAssertEqual(XcodeScheme.buildActionTargetNames(xcschemeContents: data), ["App"])
+    XCTAssertEqual(
+      XcodeScheme.buildActionReferences(xcschemeContents: data),
+      [XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:MyApp.xcodeproj")]
+    )
   }
 
   private func makeTempDir() throws -> URL {
@@ -82,7 +100,18 @@ final class XcodeSchemeTests: XCTestCase {
     try data.write(to: schemesDir.appendingPathComponent("\(name).xcscheme", isDirectory: false))
   }
 
-  func testTargetNamesFindsSharedScheme() throws {
+  private func writeSchemeWithContainer(
+    _ name: String,
+    into schemesDir: URL,
+    blueprintName: String,
+    container: String
+  ) throws {
+    try FileManager.default.createDirectory(at: schemesDir, withIntermediateDirectories: true)
+    let data = scheme(buildEntries: entry(blueprintName: blueprintName, container: container))
+    try data.write(to: schemesDir.appendingPathComponent("\(name).xcscheme", isDirectory: false))
+  }
+
+  func testBuildTargetsFindsSharedSchemeAndResolvesContainer() throws {
     let root = try makeTempDir()
     let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
     try writeScheme(
@@ -90,13 +119,15 @@ final class XcodeSchemeTests: XCTestCase {
       into: container.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
       blueprintName: "MyApp"
     )
+    let result = try XCTUnwrap(XcodeScheme.buildTargets(scheme: "MyApp", containerPath: container, projectRoot: root))
+    XCTAssertEqual(result.map(\.blueprintName), ["MyApp"])
     XCTAssertEqual(
-      XcodeScheme.targetNames(scheme: "MyApp", containerPath: container, projectRoot: root),
-      ["MyApp"]
+      result.first?.container?.standardizedFileURL.path,
+      root.appendingPathComponent("MyApp.xcodeproj").standardizedFileURL.path
     )
   }
 
-  func testTargetNamesPrefersSharedOverUser() throws {
+  func testBuildTargetsPrefersSharedOverUser() throws {
     let root = try makeTempDir()
     let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
     try writeScheme(
@@ -110,12 +141,12 @@ final class XcodeSchemeTests: XCTestCase {
       blueprintName: "UserTarget"
     )
     XCTAssertEqual(
-      XcodeScheme.targetNames(scheme: "MyApp", containerPath: container, projectRoot: root),
+      XcodeScheme.buildTargets(scheme: "MyApp", containerPath: container, projectRoot: root)?.map(\.blueprintName),
       ["SharedTarget"]
     )
   }
 
-  func testTargetNamesFindsUserSchemeWhenNoShared() throws {
+  func testBuildTargetsFindsUserSchemeWhenNoShared() throws {
     let root = try makeTempDir()
     let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
     try writeScheme(
@@ -124,33 +155,73 @@ final class XcodeSchemeTests: XCTestCase {
       blueprintName: "UserTarget"
     )
     XCTAssertEqual(
-      XcodeScheme.targetNames(scheme: "MyApp", containerPath: container, projectRoot: root),
+      XcodeScheme.buildTargets(scheme: "MyApp", containerPath: container, projectRoot: root)?.map(\.blueprintName),
       ["UserTarget"]
     )
   }
 
-  func testTargetNamesReturnsNilWhenMissing() throws {
+  func testBuildTargetsReturnsNilWhenMissing() throws {
     let root = try makeTempDir()
     let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
     try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
-    XCTAssertNil(XcodeScheme.targetNames(scheme: "Nope", containerPath: container, projectRoot: root))
+    XCTAssertNil(XcodeScheme.buildTargets(scheme: "Nope", containerPath: container, projectRoot: root))
   }
 
-  func testTargetNamesSearchesWorkspaceMemberProjects() throws {
+  func testBuildTargetsResolvesContainerRelativeToMatchedContainerDir() throws {
+    // Workspace shared scheme: container references resolve relative to the workspace's parent dir.
+    let root = try makeTempDir()
+    let workspace = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
+    try writeSchemeWithContainer(
+      "App",
+      into: workspace.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      blueprintName: "App",
+      container: "AppA/AppA.xcodeproj"
+    )
+    let result = try XCTUnwrap(XcodeScheme.buildTargets(scheme: "App", containerPath: workspace, projectRoot: root))
+    XCTAssertEqual(result.first?.blueprintName, "App")
+    XCTAssertEqual(
+      result.first?.container?.standardizedFileURL.path,
+      root.appendingPathComponent("AppA/AppA.xcodeproj").standardizedFileURL.path
+    )
+  }
+
+  func testBuildTargetsFindsSchemeInWorkspaceMemberProject() throws {
+    // Scheme lives in a member .xcodeproj under the workspace, not in the workspace itself.
     let root = try makeTempDir()
     let workspace = root.appendingPathComponent("MyApp.xcworkspace", isDirectory: true)
     try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-    // Scheme lives in a member .xcodeproj, not the workspace itself.
-    let memberProject = root.appendingPathComponent("Member.xcodeproj", isDirectory: true)
-    try writeScheme(
+    let member = root.appendingPathComponent("Member.xcodeproj", isDirectory: true)
+    try writeSchemeWithContainer(
       "MyApp",
-      into: memberProject.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
-      blueprintName: "MemberTarget"
+      into: member.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      blueprintName: "MemberTarget",
+      container: "Member.xcodeproj"
     )
+    let result = try XCTUnwrap(
+      XcodeScheme.buildTargets(scheme: "MyApp", containerPath: workspace, projectRoot: root)
+    )
+    XCTAssertEqual(result.first?.blueprintName, "MemberTarget")
     XCTAssertEqual(
-      XcodeScheme.targetNames(scheme: "MyApp", containerPath: workspace, projectRoot: root),
-      ["MemberTarget"]
+      result.first?.container?.standardizedFileURL.path,
+      root.appendingPathComponent("Member.xcodeproj").standardizedFileURL.path
     )
+  }
+
+  // MARK: - resolveContainer
+
+  func testResolveContainerResolvesRelativeToBaseDir() {
+    let base = URL(fileURLWithPath: "/ws", isDirectory: true)
+    XCTAssertEqual(
+      XcodeScheme.resolveContainer("container:AppA/AppA.xcodeproj", relativeTo: base)?.path,
+      "/ws/AppA/AppA.xcodeproj"
+    )
+  }
+
+  func testResolveContainerReturnsNilForNilOrNonContainerPrefix() {
+    let base = URL(fileURLWithPath: "/ws", isDirectory: true)
+    XCTAssertNil(XcodeScheme.resolveContainer(nil, relativeTo: base))
+    XCTAssertNil(XcodeScheme.resolveContainer("AppA.xcodeproj", relativeTo: base))
+    XCTAssertNil(XcodeScheme.resolveContainer("container:", relativeTo: base))
   }
   #endif
 }

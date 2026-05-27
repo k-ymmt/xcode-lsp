@@ -130,7 +130,7 @@ final class XcodeBuildServerTests: XCTestCase {
     ]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "AppScheme",
-      schemeTargetNames: ["App"],
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: nil)],
       allTargets: targets
     )
     XCTAssertEqual(resolution, .seeds(["G_App"]))
@@ -144,7 +144,10 @@ final class XcodeBuildServerTests: XCTestCase {
     ]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "AppScheme",
-      schemeTargetNames: ["App", "Framework"],
+      schemeTargets: [
+        XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: nil),
+        XcodeScheme.SchemeBuildTarget(blueprintName: "Framework", container: nil),
+      ],
       allTargets: targets
     )
     XCTAssertEqual(resolution, .seeds(["G_App", "G_Fw"]))
@@ -154,7 +157,7 @@ final class XcodeBuildServerTests: XCTestCase {
     let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "App",
-      schemeTargetNames: nil,
+      schemeTargets: nil,
       allTargets: targets
     )
     XCTAssertEqual(resolution, .seeds(["G_App"]))
@@ -164,7 +167,7 @@ final class XcodeBuildServerTests: XCTestCase {
     let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "Ghost",
-      schemeTargetNames: nil,
+      schemeTargets: nil,
       allTargets: targets
     )
     XCTAssertEqual(resolution, .fallbackNotFound)
@@ -174,10 +177,56 @@ final class XcodeBuildServerTests: XCTestCase {
     let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "AppScheme",
-      schemeTargetNames: ["Vanished"],
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "Vanished", container: nil)],
       allTargets: targets
     )
     XCTAssertEqual(resolution, .fallbackNoKnownTargets)
+  }
+
+  func testResolveSchemeDisambiguatesSameNamedTargetsByContainer() {
+    let appA = URL(fileURLWithPath: "/ws/AppA/AppA.xcodeproj")
+    let appB = URL(fileURLWithPath: "/ws/AppB/AppB.xcodeproj")
+    let targets = [
+      XcodeTarget(guid: "G_A", name: "App", platforms: ["macosx"], projectFilePath: appA),
+      XcodeTarget(guid: "G_B", name: "App", platforms: ["macosx"], projectFilePath: appB),
+    ]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "App",
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: appA)],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_A"]), "container:AppA should select only AppA's App")
+  }
+
+  func testResolveSchemeMatchesByNameWhenContainerAbsent() {
+    let appA = URL(fileURLWithPath: "/ws/AppA/AppA.xcodeproj")
+    let appB = URL(fileURLWithPath: "/ws/AppB/AppB.xcodeproj")
+    let targets = [
+      XcodeTarget(guid: "G_A", name: "App", platforms: ["macosx"], projectFilePath: appA),
+      XcodeTarget(guid: "G_B", name: "App", platforms: ["macosx"], projectFilePath: appB),
+    ]
+    // No container on the scheme reference -> legacy name-only match (both selected).
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "App",
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: nil)],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_A", "G_B"]))
+  }
+
+  func testResolveSchemeMatchesByNameWhenTargetProjectPathAbsent() {
+    let appA = URL(fileURLWithPath: "/ws/AppA/AppA.xcodeproj")
+    // Targets have no projectFilePath (evaluation failed) -> container cannot constrain -> name-only.
+    let targets = [
+      XcodeTarget(guid: "G_A", name: "App", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_B", name: "App", platforms: ["macosx"]),
+    ]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "App",
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: appA)],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_A", "G_B"]))
   }
 
   // MARK: - isTestProductType classification
@@ -436,6 +485,49 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertTrue(
       names.contains("Framework"),
       "expected Framework (App's dependency) in scope via the dependency closure, got: \(names)"
+    )
+  }
+
+  /// In a workspace with two projects each owning a target named `App`, a scheme whose
+  /// `ReferencedContainer` points to `AppA/AppA.xcodeproj` scopes to AppA's `App` only.
+  func testSchemeDisambiguatesSameNamedTargetsByContainer() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .workspaceWithDuplicateTargetNames, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    try project.writeWorkspaceSharedScheme(
+      named: "App",
+      buildTargets: [(blueprintName: "App", container: "AppA/AppA.xcodeproj")]
+    )
+
+    let workspaceURL = try XCTUnwrap(project.workspaceURL)
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: workspaceURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "App")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    XCTAssertEqual(
+      targetsResponse.targets.count,
+      1,
+      "container:AppA should scope to exactly one App target (not both AppA and AppB), got \(targetsResponse.targets.map(\.displayName))"
+    )
+
+    let sourcesResponse = try await buildServer.buildTargetSources(
+      request: BuildTargetSourcesRequest(targets: targetsResponse.targets.map(\.id))
+    )
+    let sourcePaths = sourcesResponse.items.flatMap(\.sources).compactMap { $0.uri.fileURL?.path }
+    XCTAssertTrue(
+      sourcePaths.contains { $0.contains("/AppA/") },
+      "scoped target's sources should come from AppA, got: \(sourcePaths)"
+    )
+    XCTAssertFalse(
+      sourcePaths.contains { $0.contains("/AppB/") },
+      "AppB sources must not be in scope, got: \(sourcePaths)"
     )
   }
 
