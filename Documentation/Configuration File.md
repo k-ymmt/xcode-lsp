@@ -35,7 +35,7 @@ The structure of the file is currently not guaranteed to be stable. Options may 
   - `buildSystem: "native"|"swiftbuild"`: Which SwiftPM build system should be used when opening a package.
 - `xcode`: Options for Xcode build server workspaces.
   - `container: string`: The `.xcodeproj` or `.xcworkspace` to load, relative to the project root. Auto-detected if `nil`.
-  - `scheme: string`: The Xcode scheme whose Build-action targets (plus their dependency closure) the build server is scoped to. If `nil`, all targets in the project/workspace are used. If the named scheme has no `.xcscheme` file but a same-named target exists, that target is used; otherwise all targets are used.
+  - `scheme: string`: The Xcode scheme whose Build / Test / Launch action targets (plus their dependency closure) the build server is scoped to. If `nil`, all targets in the project/workspace are used. If the named scheme has no `.xcscheme` file but a same-named target exists, that target is used; otherwise all targets are used.
   - `configuration: string`: The build configuration to use. Defaults to `Debug`.
   - `destination: string`: An xcodebuild `-destination` specifier (e.g. `platform=iOS Simulator,name=iPhone 15`). If `nil`, a destination is inferred from each target's supported platform.
 - `compilationDatabase`: Dictionary with the following keys, defining options for workspaces with a compilation database.

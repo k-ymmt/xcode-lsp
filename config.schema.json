@@ -378,8 +378,8 @@
           "type" : "string"
         },
         "scheme" : {
-          "description" : "The Xcode scheme whose Build-action targets (plus their dependency closure) the build server is scoped to. If `nil`, all targets in the project/workspace are used. If the named scheme has no `.xcscheme` file but a same-named target exists, that target is used; otherwise all targets are used.",
-          "markdownDescription" : "The Xcode scheme whose Build-action targets (plus their dependency closure) the build server is scoped to. If `nil`, all targets in the project/workspace are used. If the named scheme has no `.xcscheme` file but a same-named target exists, that target is used; otherwise all targets are used.",
+          "description" : "The Xcode scheme whose Build / Test / Launch action targets (plus their dependency closure) the build server is scoped to. If `nil`, all targets in the project/workspace are used. If the named scheme has no `.xcscheme` file but a same-named target exists, that target is used; otherwise all targets are used.",
+          "markdownDescription" : "The Xcode scheme whose Build / Test / Launch action targets (plus their dependency closure) the build server is scoped to. If `nil`, all targets in the project/workspace are used. If the named scheme has no `.xcscheme` file but a same-named target exists, that target is used; otherwise all targets are used.",
           "type" : "string"
         }
       },
