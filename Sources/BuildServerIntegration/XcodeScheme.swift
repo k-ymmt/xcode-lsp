@@ -20,7 +20,8 @@ import FoundationXML
 /// Locates and parses Xcode `.xcscheme` files. SwiftBuild does not expose scheme discovery, so the
 /// build server reads schemes from disk itself. This type has no `import SwiftBuild` dependency.
 package enum XcodeScheme {
-  /// One `BuildableReference` parsed from a scheme's `BuildAction`, before container path resolution.
+  /// One `BuildableReference` parsed from a scheme's `BuildAction`, `TestAction`, or `LaunchAction`,
+  /// before container path resolution.
   package struct SchemeBuildableReference: Hashable, Sendable {
     /// The `BlueprintName` attribute (the target name).
     package var blueprintName: String
@@ -145,7 +146,11 @@ package enum XcodeScheme {
 
 private final class SchemeReferenceDelegate: NSObject, XMLParserDelegate {
   var references: [XcodeScheme.SchemeBuildableReference] = []
-  private var inBuildAction = false
+  /// How many currently-open ancestor elements are a build/test/launch action. A `BuildableReference`
+  /// counts as a build seed when this is > 0. The three actions are siblings (never nested) in a scheme,
+  /// so this is always 0 or 1 in practice; a counter (rather than a Bool) keeps the logic robust and
+  /// ignores any `BuildableReference` outside these actions.
+  private var seedActionDepth = 0
 
   func parser(
     _ parser: XMLParser,
@@ -155,10 +160,10 @@ private final class SchemeReferenceDelegate: NSObject, XMLParserDelegate {
     attributes attributeDict: [String: String]
   ) {
     switch elementName {
-    case "BuildAction":
-      inBuildAction = true
+    case "BuildAction", "TestAction", "LaunchAction":
+      seedActionDepth += 1
     case "BuildableReference":
-      if inBuildAction, let name = attributeDict["BlueprintName"] {
+      if seedActionDepth > 0, let name = attributeDict["BlueprintName"] {
         references.append(
           XcodeScheme.SchemeBuildableReference(
             blueprintName: name,
@@ -177,8 +182,11 @@ private final class SchemeReferenceDelegate: NSObject, XMLParserDelegate {
     namespaceURI: String?,
     qualifiedName qName: String?
   ) {
-    if elementName == "BuildAction" {
-      inBuildAction = false
+    switch elementName {
+    case "BuildAction", "TestAction", "LaunchAction":
+      seedActionDepth -= 1
+    default:
+      break
     }
   }
 }

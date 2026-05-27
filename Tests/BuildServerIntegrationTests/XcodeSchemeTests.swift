@@ -73,20 +73,41 @@ final class XcodeSchemeTests: XCTestCase {
     )
   }
 
-  func testIgnoresBuildableReferencesOutsideBuildAction() {
-    let testAction = """
-         <TestAction buildConfiguration="Debug">
-            <Testables>
-               <TestableReference skipped="NO">
-                  <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="Tests" BuildableName="Tests" BlueprintName="Tests" ReferencedContainer="container:MyApp.xcodeproj"></BuildableReference>
-               </TestableReference>
-            </Testables>
-         </TestAction>
+  func testCollectsBuildTestAndLaunchActionReferences() {
+    // Build action: App. Test action: AppTests (skipped=NO) and AppUITests (skipped=YES). Launch action:
+    // App (duplicate of the build-action App -> deduped). Skipped testables are still collected because
+    // scope is about indexing, not running.
+    let extraActions = """
+           <TestAction buildConfiguration="Debug">
+              <Testables>
+                 <TestableReference skipped="NO">
+                    <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="AppTests" BuildableName="AppTests.xctest" BlueprintName="AppTests" ReferencedContainer="container:MyApp.xcodeproj"></BuildableReference>
+                 </TestableReference>
+                 <TestableReference skipped="YES">
+                    <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="AppUITests" BuildableName="AppUITests.xctest" BlueprintName="AppUITests" ReferencedContainer="container:MyApp.xcodeproj"></BuildableReference>
+                 </TestableReference>
+              </Testables>
+           </TestAction>
+           <LaunchAction buildConfiguration="Debug">
+              <BuildableProductRunnable runnableDebuggingMode="0">
+                 <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="App" BuildableName="App.app" BlueprintName="App" ReferencedContainer="container:MyApp.xcodeproj"></BuildableReference>
+              </BuildableProductRunnable>
+           </LaunchAction>
       """
-    let data = scheme(buildEntries: entry(blueprintName: "App"), extraActions: testAction)
+    let data = scheme(buildEntries: entry(blueprintName: "App"), extraActions: extraActions)
     XCTAssertEqual(
       XcodeScheme.schemeSeedReferences(xcschemeContents: data),
-      [XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:MyApp.xcodeproj")]
+      [
+        XcodeScheme.SchemeBuildableReference(blueprintName: "App", referencedContainer: "container:MyApp.xcodeproj"),
+        XcodeScheme.SchemeBuildableReference(
+          blueprintName: "AppTests",
+          referencedContainer: "container:MyApp.xcodeproj"
+        ),
+        XcodeScheme.SchemeBuildableReference(
+          blueprintName: "AppUITests",
+          referencedContainer: "container:MyApp.xcodeproj"
+        ),
+      ]
     )
   }
 
