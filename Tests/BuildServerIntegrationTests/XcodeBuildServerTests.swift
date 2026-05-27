@@ -461,6 +461,42 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// A scheme whose Build action builds only `MyApp` but whose Test action's `Testables` reference
+  /// `MyAppTests` must scope the build server to include the test target. `MyAppTests` is not reachable
+  /// from `MyApp`'s dependency closure (the test depends on the app, not vice versa), so this only passes
+  /// if Test-action references are collected as scope seeds.
+  func testSchemeScopesToTestActionTestables() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithUnitTestTarget, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    try project.writeSharedScheme(
+      named: "MyAppScheme",
+      buildTargetNames: ["MyApp"],
+      testTargetNames: ["MyAppTests"]
+    )
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "MyAppScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = Set(targetsResponse.targets.compactMap(\.displayName))
+    XCTAssertTrue(
+      names.contains("MyAppTests"),
+      "Test-action testable MyAppTests should be in scope; got \(names.sorted())"
+    )
+    XCTAssertTrue(
+      names.contains("MyApp"),
+      "Build-action target MyApp should be in scope; got \(names.sorted())"
+    )
+  }
+
   /// A scheme building `App` (which depends on `Framework`) scopes to both targets via the
   /// dependency closure.
   func testSchemeIncludesDependencyClosure() async throws {
