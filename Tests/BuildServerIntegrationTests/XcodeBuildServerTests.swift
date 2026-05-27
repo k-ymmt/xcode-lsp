@@ -180,6 +180,28 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertEqual(resolution, .fallbackNoKnownTargets)
   }
 
+  // MARK: - isTestProductType classification
+
+  func testUnitTestProductTypeIsTest() {
+    XCTAssertTrue(SwiftBuildSession.isTestProductType("com.apple.product-type.bundle.unit-test"))
+  }
+
+  func testUITestingProductTypeIsTest() {
+    XCTAssertTrue(SwiftBuildSession.isTestProductType("com.apple.product-type.bundle.ui-testing"))
+  }
+
+  func testApplicationProductTypeIsNotTest() {
+    XCTAssertFalse(SwiftBuildSession.isTestProductType("com.apple.product-type.application"))
+  }
+
+  func testFrameworkProductTypeIsNotTest() {
+    XCTAssertFalse(SwiftBuildSession.isTestProductType("com.apple.product-type.framework"))
+  }
+
+  func testEmptyProductTypeIsNotTest() {
+    XCTAssertFalse(SwiftBuildSession.isTestProductType(""))
+  }
+
   private func temporaryDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcode-bs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

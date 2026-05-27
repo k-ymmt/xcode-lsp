@@ -372,6 +372,15 @@ package actor SwiftBuildSession {
     return order.first { set.contains($0) } ?? "macosx"
   }
 
+  /// Whether a `PRODUCT_TYPE` identifier denotes a test bundle (unit-test or UI-testing).
+  ///
+  /// `package` (not `private`) so it is unit-testable from `BuildServerIntegrationTests`; it
+  /// touches no `SwiftBuild` types.
+  package static func isTestProductType(_ identifier: String) -> Bool {
+    identifier == "com.apple.product-type.bundle.unit-test"
+      || identifier == "com.apple.product-type.bundle.ui-testing"
+  }
+
   /// Map a platform name to a run destination. Unknown names fall back to macOS.
   static func runDestination(forPlatform platform: String) -> SWBRunDestinationInfo {
     switch platform {
