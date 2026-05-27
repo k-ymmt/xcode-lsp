@@ -488,6 +488,49 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// In a workspace with two projects each owning a target named `App`, a scheme whose
+  /// `ReferencedContainer` points to `AppA/AppA.xcodeproj` scopes to AppA's `App` only.
+  func testSchemeDisambiguatesSameNamedTargetsByContainer() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .workspaceWithDuplicateTargetNames, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    try project.writeWorkspaceSharedScheme(
+      named: "App",
+      buildTargets: [(blueprintName: "App", container: "AppA/AppA.xcodeproj")]
+    )
+
+    let workspaceURL = try XCTUnwrap(project.workspaceURL)
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: workspaceURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "App")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let targetsResponse = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    XCTAssertEqual(
+      targetsResponse.targets.count,
+      1,
+      "container:AppA should scope to exactly one App target (not both AppA and AppB), got \(targetsResponse.targets.map(\.displayName))"
+    )
+
+    let sourcesResponse = try await buildServer.buildTargetSources(
+      request: BuildTargetSourcesRequest(targets: targetsResponse.targets.map(\.id))
+    )
+    let sourcePaths = sourcesResponse.items.flatMap(\.sources).compactMap { $0.uri.fileURL?.path }
+    XCTAssertTrue(
+      sourcePaths.contains { $0.contains("/AppA/") },
+      "scoped target's sources should come from AppA, got: \(sourcePaths)"
+    )
+    XCTAssertFalse(
+      sourcePaths.contains { $0.contains("/AppB/") },
+      "AppB sources must not be in scope, got: \(sourcePaths)"
+    )
+  }
+
   /// Test 2: `prepare` runs an actual build that populates the index store directory on disk.
   func testPreparePopulatesIndexStore() async throws {
     try skipUnlessXcodeAvailable()
