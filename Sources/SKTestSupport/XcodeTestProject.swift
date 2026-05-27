@@ -1698,7 +1698,9 @@ package final class XcodeTestProject {
       case .workspaceWithDuplicateTargetNames:
         // Unreachable: excluded by the enclosing `if kind != .workspaceWithDuplicateTargetNames`.
         // This arm exists only to keep the switch exhaustive; workspace projects are generated below.
-        preconditionFailure("workspaceWithDuplicateTargetNames is generated separately, not via the single-project template")
+        preconditionFailure(
+          "workspaceWithDuplicateTargetNames is generated separately, not via the single-project template"
+        )
       }
       try template.write(
         to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
@@ -1813,24 +1815,34 @@ package final class XcodeTestProject {
     withExtendedLifetime(self) { _ in }
   }
 
-  /// Write a minimal shared `.xcscheme` named `name` into `<xcodeprojURL>/xcshareddata/xcschemes`,
-  /// whose Build action references `buildTargetNames`. Returns the written scheme file URL.
+  /// Write a minimal shared `.xcscheme` named `name` into `<xcodeprojURL>/xcshareddata/xcschemes`.
+  /// `buildTargetNames` populate the Build action; `testTargetNames` populate the Test action's
+  /// `Testables`; `launchTargetName` (if any) populates the Launch action's runnable. Returns the
+  /// written scheme file URL.
   ///
-  /// Only the `BlueprintName` attribute is meaningful to SourceKit-LSP's scheme parser; the other
-  /// attributes are filled with the target name as a stand-in.
+  /// Only the `BlueprintName` / `ReferencedContainer` attributes are meaningful to SourceKit-LSP's scheme
+  /// parser; the other attributes are filled with the target name as a stand-in.
   @discardableResult
-  package func writeSharedScheme(named name: String, buildTargetNames: [String]) throws -> URL {
+  package func writeSharedScheme(
+    named name: String,
+    buildTargetNames: [String],
+    testTargetNames: [String] = [],
+    launchTargetName: String? = nil
+  ) throws -> URL {
     let schemesDir = xcodeprojURL.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true)
     try fileManager.createDirectory(at: schemesDir, withIntermediateDirectories: true)
     let container = xcodeprojURL.lastPathComponent
+    func buildableReference(_ target: String) -> String {
+      "<BuildableReference BuildableIdentifier=\"primary\" BlueprintIdentifier=\"\(target)\" BuildableName=\"\(target)\" BlueprintName=\"\(target)\" ReferencedContainer=\"container:\(container)\"></BuildableReference>"
+    }
     let entryLines: [String] = buildTargetNames.flatMap { target -> [String] in
       [
         "         <BuildActionEntry buildForTesting=\"YES\" buildForRunning=\"YES\" buildForProfiling=\"YES\" buildForArchiving=\"YES\" buildForAnalyzing=\"YES\">",
-        "            <BuildableReference BuildableIdentifier=\"primary\" BlueprintIdentifier=\"\(target)\" BuildableName=\"\(target)\" BlueprintName=\"\(target)\" ReferencedContainer=\"container:\(container)\"></BuildableReference>",
+        "            \(buildableReference(target))",
         "         </BuildActionEntry>",
       ]
     }
-    let lines: [String] =
+    var lines: [String] =
       [
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>",
         "<Scheme LastUpgradeVersion=\"1500\" version=\"1.7\">",
@@ -1839,8 +1851,34 @@ package final class XcodeTestProject {
       ] + entryLines + [
         "      </BuildActionEntries>",
         "   </BuildAction>",
-        "</Scheme>",
       ]
+    if !testTargetNames.isEmpty {
+      let testableLines: [String] = testTargetNames.flatMap { target -> [String] in
+        [
+          "         <TestableReference skipped=\"NO\">",
+          "            \(buildableReference(target))",
+          "         </TestableReference>",
+        ]
+      }
+      lines +=
+        [
+          "   <TestAction buildConfiguration=\"Debug\">",
+          "      <Testables>",
+        ] + testableLines + [
+          "      </Testables>",
+          "   </TestAction>",
+        ]
+    }
+    if let launchTargetName {
+      lines += [
+        "   <LaunchAction buildConfiguration=\"Debug\">",
+        "      <BuildableProductRunnable runnableDebuggingMode=\"0\">",
+        "         \(buildableReference(launchTargetName))",
+        "      </BuildableProductRunnable>",
+        "   </LaunchAction>",
+      ]
+    }
+    lines.append("</Scheme>")
     let url = schemesDir.appendingPathComponent("\(name).xcscheme", isDirectory: false)
     try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
     return url
@@ -1850,9 +1888,14 @@ package final class XcodeTestProject {
   /// whose Build action references each `(blueprintName, container)` pair. `container` is the `container:`
   /// relative path (e.g. `AppA/AppA.xcodeproj`). Requires `workspaceURL` to be set.
   @discardableResult
-  package func writeWorkspaceSharedScheme(named name: String, buildTargets: [(blueprintName: String, container: String)]) throws -> URL {
+  package func writeWorkspaceSharedScheme(
+    named name: String,
+    buildTargets: [(blueprintName: String, container: String)]
+  ) throws -> URL {
     struct NotAWorkspaceError: Error, CustomStringConvertible {
-      var description: String { "writeWorkspaceSharedScheme requires workspaceURL to be non-nil (only set for workspace kinds)" }
+      var description: String {
+        "writeWorkspaceSharedScheme requires workspaceURL to be non-nil (only set for workspace kinds)"
+      }
     }
     guard let workspaceURL else {
       throw NotAWorkspaceError()

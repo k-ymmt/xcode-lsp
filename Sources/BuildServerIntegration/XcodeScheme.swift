@@ -20,7 +20,8 @@ import FoundationXML
 /// Locates and parses Xcode `.xcscheme` files. SwiftBuild does not expose scheme discovery, so the
 /// build server reads schemes from disk itself. This type has no `import SwiftBuild` dependency.
 package enum XcodeScheme {
-  /// One `BuildableReference` parsed from a scheme's `BuildAction`, before container path resolution.
+  /// One `BuildableReference` parsed from a scheme's `BuildAction`, `TestAction`, or `LaunchAction`,
+  /// before container path resolution.
   package struct SchemeBuildableReference: Hashable, Sendable {
     /// The `BlueprintName` attribute (the target name).
     package var blueprintName: String
@@ -61,7 +62,7 @@ package enum XcodeScheme {
       return nil
     }
     let baseDir = container.deletingLastPathComponent()
-    return buildActionReferences(xcschemeContents: data).map { reference in
+    return schemeSeedReferences(xcschemeContents: data).map { reference in
       SchemeBuildTarget(
         blueprintName: reference.blueprintName,
         container: resolveContainer(reference.referencedContainer, relativeTo: baseDir)
@@ -112,12 +113,12 @@ package enum XcodeScheme {
     return nil
   }
 
-  /// Extract the `BuildableReference`s (name + `ReferencedContainer`) referenced by a scheme's
-  /// `BuildAction`. References in `TestAction`/`LaunchAction`/etc. are ignored. De-duplicated by
+  /// Extract every `BuildableReference` (name + `ReferencedContainer`) the scheme uses as a build seed:
+  /// those nested under the scheme's `BuildAction`, `TestAction`, or `LaunchAction`. De-duplicated by
   /// (name, container) pair, preserving order.
-  package static func buildActionReferences(xcschemeContents: Data) -> [SchemeBuildableReference] {
+  package static func schemeSeedReferences(xcschemeContents: Data) -> [SchemeBuildableReference] {
     let parser = XMLParser(data: xcschemeContents)
-    let delegate = BuildActionDelegate()
+    let delegate = SchemeReferenceDelegate()
     parser.delegate = delegate
     parser.parse()
     var seen = Set<SchemeBuildableReference>()
@@ -143,9 +144,13 @@ package enum XcodeScheme {
   }
 }
 
-private final class BuildActionDelegate: NSObject, XMLParserDelegate {
+private final class SchemeReferenceDelegate: NSObject, XMLParserDelegate {
   var references: [XcodeScheme.SchemeBuildableReference] = []
-  private var inBuildAction = false
+  /// How many currently-open ancestor elements are a build/test/launch action. A `BuildableReference`
+  /// counts as a build seed when this is > 0. The three actions are siblings (never nested) in a scheme,
+  /// so this is always 0 or 1 in practice; a counter (rather than a Bool) keeps the logic robust and
+  /// ignores any `BuildableReference` outside these actions.
+  private var seedActionDepth = 0
 
   func parser(
     _ parser: XMLParser,
@@ -155,10 +160,10 @@ private final class BuildActionDelegate: NSObject, XMLParserDelegate {
     attributes attributeDict: [String: String]
   ) {
     switch elementName {
-    case "BuildAction":
-      inBuildAction = true
+    case "BuildAction", "TestAction", "LaunchAction":
+      seedActionDepth += 1
     case "BuildableReference":
-      if inBuildAction, let name = attributeDict["BlueprintName"] {
+      if seedActionDepth > 0, let name = attributeDict["BlueprintName"] {
         references.append(
           XcodeScheme.SchemeBuildableReference(
             blueprintName: name,
@@ -177,8 +182,11 @@ private final class BuildActionDelegate: NSObject, XMLParserDelegate {
     namespaceURI: String?,
     qualifiedName qName: String?
   ) {
-    if elementName == "BuildAction" {
-      inBuildAction = false
+    switch elementName {
+    case "BuildAction", "TestAction", "LaunchAction":
+      seedActionDepth -= 1
+    default:
+      break
     }
   }
 }
