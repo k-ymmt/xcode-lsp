@@ -130,7 +130,7 @@ final class XcodeBuildServerTests: XCTestCase {
     ]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "AppScheme",
-      schemeTargetNames: ["App"],
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: nil)],
       allTargets: targets
     )
     XCTAssertEqual(resolution, .seeds(["G_App"]))
@@ -144,7 +144,10 @@ final class XcodeBuildServerTests: XCTestCase {
     ]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "AppScheme",
-      schemeTargetNames: ["App", "Framework"],
+      schemeTargets: [
+        XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: nil),
+        XcodeScheme.SchemeBuildTarget(blueprintName: "Framework", container: nil),
+      ],
       allTargets: targets
     )
     XCTAssertEqual(resolution, .seeds(["G_App", "G_Fw"]))
@@ -154,7 +157,7 @@ final class XcodeBuildServerTests: XCTestCase {
     let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "App",
-      schemeTargetNames: nil,
+      schemeTargets: nil,
       allTargets: targets
     )
     XCTAssertEqual(resolution, .seeds(["G_App"]))
@@ -164,7 +167,7 @@ final class XcodeBuildServerTests: XCTestCase {
     let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "Ghost",
-      schemeTargetNames: nil,
+      schemeTargets: nil,
       allTargets: targets
     )
     XCTAssertEqual(resolution, .fallbackNotFound)
@@ -174,10 +177,56 @@ final class XcodeBuildServerTests: XCTestCase {
     let targets = [XcodeTarget(guid: "G_App", name: "App", platforms: ["macosx"])]
     let resolution = XcodeBuildServer.resolveScheme(
       named: "AppScheme",
-      schemeTargetNames: ["Vanished"],
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "Vanished", container: nil)],
       allTargets: targets
     )
     XCTAssertEqual(resolution, .fallbackNoKnownTargets)
+  }
+
+  func testResolveSchemeDisambiguatesSameNamedTargetsByContainer() {
+    let appA = URL(fileURLWithPath: "/ws/AppA/AppA.xcodeproj")
+    let appB = URL(fileURLWithPath: "/ws/AppB/AppB.xcodeproj")
+    let targets = [
+      XcodeTarget(guid: "G_A", name: "App", platforms: ["macosx"], projectFilePath: appA),
+      XcodeTarget(guid: "G_B", name: "App", platforms: ["macosx"], projectFilePath: appB),
+    ]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "App",
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: appA)],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_A"]), "container:AppA should select only AppA's App")
+  }
+
+  func testResolveSchemeMatchesByNameWhenContainerAbsent() {
+    let appA = URL(fileURLWithPath: "/ws/AppA/AppA.xcodeproj")
+    let appB = URL(fileURLWithPath: "/ws/AppB/AppB.xcodeproj")
+    let targets = [
+      XcodeTarget(guid: "G_A", name: "App", platforms: ["macosx"], projectFilePath: appA),
+      XcodeTarget(guid: "G_B", name: "App", platforms: ["macosx"], projectFilePath: appB),
+    ]
+    // No container on the scheme reference -> legacy name-only match (both selected).
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "App",
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: nil)],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_A", "G_B"]))
+  }
+
+  func testResolveSchemeMatchesByNameWhenTargetProjectPathAbsent() {
+    let appA = URL(fileURLWithPath: "/ws/AppA/AppA.xcodeproj")
+    // Targets have no projectFilePath (evaluation failed) -> container cannot constrain -> name-only.
+    let targets = [
+      XcodeTarget(guid: "G_A", name: "App", platforms: ["macosx"]),
+      XcodeTarget(guid: "G_B", name: "App", platforms: ["macosx"]),
+    ]
+    let resolution = XcodeBuildServer.resolveScheme(
+      named: "App",
+      schemeTargets: [XcodeScheme.SchemeBuildTarget(blueprintName: "App", container: appA)],
+      allTargets: targets
+    )
+    XCTAssertEqual(resolution, .seeds(["G_A", "G_B"]))
   }
 
   // MARK: - isTestProductType classification
