@@ -231,6 +231,44 @@ final class XcodeSchemeTests: XCTestCase {
     )
   }
 
+  func testBuildTargetsFindsSchemeInSubdirectoryMemberViaNestedGroup() throws {
+    // The workspace references a member .xcodeproj nested in a subdirectory via <Group>. The scheme lives in
+    // that subdir project; discovery must follow contents.xcworkspacedata, not a top-level glob.
+    let root = try makeTempDir()
+    let workspace = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
+    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    let workspacedata = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Workspace version = "1.0">
+         <Group location = "group:Modules">
+            <FileRef location = "group:MyLib/MyLib.xcodeproj"></FileRef>
+         </Group>
+      </Workspace>
+      """
+    try (workspacedata + "\n").write(
+      to: workspace.appendingPathComponent("contents.xcworkspacedata", isDirectory: false),
+      atomically: true,
+      encoding: .utf8
+    )
+    let member = root.appendingPathComponent("Modules/MyLib/MyLib.xcodeproj", isDirectory: true)
+    try writeSchemeWithContainer(
+      "MyLib",
+      into: member.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      blueprintName: "MyLib",
+      container: "MyLib.xcodeproj"
+    )
+    let result = try XCTUnwrap(
+      XcodeScheme.buildTargets(scheme: "MyLib", containerPath: workspace, projectRoot: root)
+    )
+    XCTAssertEqual(result.first?.blueprintName, "MyLib")
+    // The scheme's `container:MyLib.xcodeproj` resolves relative to the subdirectory member project's
+    // own directory (where the scheme file was found), proving subdir-based container resolution works.
+    XCTAssertEqual(
+      result.first?.container?.standardizedFileURL.path,
+      root.appendingPathComponent("Modules/MyLib/MyLib.xcodeproj").standardizedFileURL.path
+    )
+  }
+
   // MARK: - resolveContainer
 
   func testResolveContainerResolvesRelativeToBaseDir() {

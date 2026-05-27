@@ -24,6 +24,9 @@ package import Foundation
 /// (with `main.swift`) that depends on a local SwiftPM package `MyPackage` exposing the library product
 /// `MyLib`. `.workspaceWithDuplicateTargetNames` produces a `.xcworkspace` bundling two sibling-subdir
 /// `.xcodeproj`s (`AppA/AppA.xcodeproj`, `AppB/AppB.xcodeproj`), each with a target named `App`.
+/// `.workspaceWithNestedProject` produces a `.xcworkspace` bundling a root `MyApp.xcodeproj` (target
+/// `MyApp`) and a subdirectory `Modules/App/App.xcodeproj` (target `App`) referenced via a nested
+/// `<Group>`, exercising subdirectory member-project resolution.
 ///
 /// The temporary directory is removed when the `XcodeTestProject` is deinitialized, unless the
 /// `SOURCEKIT_LSP_KEEP_TEST_SCRATCH_DIR` environment variable is set.
@@ -41,7 +44,8 @@ package final class XcodeTestProject {
   /// `main.swift` at the project root; for `.appWithFrameworkDependency` it is `App/main.swift`.
   package let sourceFileURL: URL
 
-  /// For `.workspaceWithDuplicateTargetNames`, the `.xcworkspace` container path; `nil` otherwise.
+  /// For workspace kinds (`.workspaceWithDuplicateTargetNames`, `.workspaceWithNestedProject`), the
+  /// `.xcworkspace` container path; `nil` for single-project kinds.
   /// Used as the base directory for ``writeWorkspaceSharedScheme(named:buildTargets:)``.
   package let workspaceURL: URL?
 
@@ -66,6 +70,10 @@ package final class XcodeTestProject {
     /// `AppB/AppB.xcodeproj`), each with a target named `App`. Exercises scheme container
     /// disambiguation: a workspace-shared scheme `App` references only `AppA/AppA.xcodeproj`.
     case workspaceWithDuplicateTargetNames
+    /// A `.xcworkspace` bundling a root project (`MyApp.xcodeproj`, target `MyApp`) and a subdirectory
+    /// project (`Modules/App/App.xcodeproj`, target `App`), the latter referenced via a nested `<Group>`
+    /// in `contents.xcworkspacedata`. Exercises subdirectory member-project resolution.
+    case workspaceWithNestedProject
   }
 
   /// The validated `project.pbxproj` template for a macOS command-line tool target named `MyApp` with a single
@@ -1662,6 +1670,9 @@ package final class XcodeTestProject {
     case .workspaceWithDuplicateTargetNames:
       self.xcodeprojURL = root.appendingPathComponent("AppA/AppA.xcodeproj", isDirectory: true)
       self.workspaceURL = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
+    case .workspaceWithNestedProject:
+      self.xcodeprojURL = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+      self.workspaceURL = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
     default:
       self.xcodeprojURL = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
       self.workspaceURL = nil
@@ -1671,7 +1682,8 @@ package final class XcodeTestProject {
     // (`App/main.swift` and `Framework/Framework.swift`); `.workspaceWithDuplicateTargetNames` puts
     // the primary source in `AppA/main.swift`; every other kind keeps `main.swift` at the project root.
     switch kind {
-    case .macOSCommandLineTool, .iOSApp, .appWithUnitTestTarget, .appWithPackageDependency:
+    case .macOSCommandLineTool, .iOSApp, .appWithUnitTestTarget, .appWithPackageDependency,
+      .workspaceWithNestedProject:
       self.sourceFileURL = root.appendingPathComponent("main.swift", isDirectory: false)
     case .appWithFrameworkDependency:
       self.sourceFileURL =
@@ -1686,7 +1698,7 @@ package final class XcodeTestProject {
     }
 
     // Single-project generation (skipped for workspace kinds which write two projects separately below).
-    if kind != .workspaceWithDuplicateTargetNames {
+    if kind != .workspaceWithDuplicateTargetNames && kind != .workspaceWithNestedProject {
       try fileManager.createDirectory(at: xcodeprojURL, withIntermediateDirectories: true)
       let template: String
       switch kind {
@@ -1695,12 +1707,10 @@ package final class XcodeTestProject {
       case .appWithFrameworkDependency: template = Self.appWithFrameworkPbxprojTemplate
       case .appWithUnitTestTarget: template = Self.appWithUnitTestPbxprojTemplate
       case .appWithPackageDependency: template = Self.appWithPackageDependencyPbxprojTemplate
-      case .workspaceWithDuplicateTargetNames:
-        // Unreachable: excluded by the enclosing `if kind != .workspaceWithDuplicateTargetNames`.
-        // This arm exists only to keep the switch exhaustive; workspace projects are generated below.
-        preconditionFailure(
-          "workspaceWithDuplicateTargetNames is generated separately, not via the single-project template"
-        )
+      case .workspaceWithDuplicateTargetNames, .workspaceWithNestedProject:
+        // Unreachable: excluded by the enclosing guard. This arm exists only to keep the switch
+        // exhaustive; workspace projects are generated in dedicated blocks below.
+        preconditionFailure("workspace kinds are generated separately, not via the single-project template")
       }
       try template.write(
         to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
@@ -1793,6 +1803,51 @@ package final class XcodeTestProject {
         <Workspace version = "1.0">
            <FileRef location = "group:AppA/AppA.xcodeproj"></FileRef>
            <FileRef location = "group:AppB/AppB.xcodeproj"></FileRef>
+        </Workspace>
+        """
+      try (contents + "\n").write(
+        to: workspace.appendingPathComponent("contents.xcworkspacedata", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
+    }
+
+    if case .workspaceWithNestedProject = kind {
+      // Root project: MyApp.xcodeproj (target MyApp, A1-prefixed ids), with main.swift at the project root.
+      try fileManager.createDirectory(at: xcodeprojURL, withIntermediateDirectories: true)
+      try Self.pbxprojTemplate.write(
+        to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
+      try sourceContents.write(to: sourceFileURL, atomically: true, encoding: .utf8)
+
+      // Subdirectory project: Modules/App/App.xcodeproj (target App, B2-prefixed ids => no id collision
+      // with the root project), with its own main.swift as a sibling of the .xcodeproj.
+      let subProjDir = root.appendingPathComponent("Modules/App", isDirectory: true)
+      let subXcodeproj = subProjDir.appendingPathComponent("App.xcodeproj", isDirectory: true)
+      try fileManager.createDirectory(at: subXcodeproj, withIntermediateDirectories: true)
+      try Self.duplicateTargetAppBTemplate.write(
+        to: subXcodeproj.appendingPathComponent("project.pbxproj", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
+      try sourceContents.write(
+        to: subProjDir.appendingPathComponent("main.swift", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
+
+      // Workspace: root project referenced directly; subdir project via a nested <Group location="group:Modules">.
+      let workspace = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
+      try fileManager.createDirectory(at: workspace, withIntermediateDirectories: true)
+      let contents = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <Workspace version = "1.0">
+           <FileRef location = "group:MyApp.xcodeproj"></FileRef>
+           <Group location = "group:Modules">
+              <FileRef location = "group:App/App.xcodeproj"></FileRef>
+           </Group>
         </Workspace>
         """
       try (contents + "\n").write(
