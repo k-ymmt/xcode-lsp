@@ -51,5 +51,67 @@ package enum XcodeWorkspace {
     }
     return URL(fileURLWithPath: (baseDir as NSString).appendingPathComponent(path)).standardizedFileURL
   }
+
+  /// Parse `contents.xcworkspacedata` XML and return every member `.xcodeproj`, fully resolved relative to
+  /// `baseDir` (the directory containing the `.xcworkspace`). Recurses into nested `<Group>`s, accumulating
+  /// their location prefixes. De-duplicated by resolved path, preserving document order.
+  package static func projectReferences(xcworkspacedataContents: Data, baseDir: URL) -> [URL] {
+    let parser = XMLParser(data: xcworkspacedataContents)
+    let delegate = WorkspaceDataDelegate(workspaceDir: baseDir)
+    parser.delegate = delegate
+    parser.parse()
+    var seen = Set<String>()
+    return delegate.projects.filter { seen.insert($0.path).inserted }
+  }
+}
+
+private final class WorkspaceDataDelegate: NSObject, XMLParserDelegate {
+  private let workspaceDir: URL
+  /// Stack of resolved base directories: the workspace dir, then one entry per open `<Group>`.
+  private var baseStack: [URL]
+  var projects: [URL] = []
+
+  init(workspaceDir: URL) {
+    self.workspaceDir = workspaceDir
+    self.baseStack = [workspaceDir]
+  }
+
+  func parser(
+    _ parser: XMLParser,
+    didStartElement elementName: String,
+    namespaceURI: String?,
+    qualifiedName qName: String?,
+    attributes attributeDict: [String: String]
+  ) {
+    let current = baseStack.last ?? workspaceDir
+    switch elementName {
+    case "Group":
+      let resolved = attributeDict["location"].flatMap {
+        XcodeWorkspace.resolveLocation($0, currentBase: current, workspaceDir: workspaceDir)
+      }
+      // A location-less or unresolvable Group does not change the base.
+      baseStack.append(resolved ?? current)
+    case "FileRef":
+      if let location = attributeDict["location"],
+        let resolved = XcodeWorkspace.resolveLocation(location, currentBase: current, workspaceDir: workspaceDir),
+        resolved.pathExtension == "xcodeproj"
+      {
+        projects.append(resolved)
+      }
+    default:
+      break
+    }
+  }
+
+  func parser(
+    _ parser: XMLParser,
+    didEndElement elementName: String,
+    namespaceURI: String?,
+    qualifiedName qName: String?
+  ) {
+    if elementName == "Group", baseStack.count > 1 {
+      baseStack.removeLast()
+    }
+  }
 }
 #endif

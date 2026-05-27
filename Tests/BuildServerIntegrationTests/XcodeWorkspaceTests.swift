@@ -79,5 +79,93 @@ final class XcodeWorkspaceTests: XCTestCase {
     XCTAssertNil(XcodeWorkspace.resolveLocation("developer:usr/bin", currentBase: ws, workspaceDir: ws))
     XCTAssertNil(XcodeWorkspace.resolveLocation("noColonHere", currentBase: ws, workspaceDir: ws))
   }
+
+  // MARK: - projectReferences
+
+  private func data(_ xml: String) -> Data { Data(xml.utf8) }
+
+  func testProjectReferencesFlatFileRefs() {
+    let base = URL(fileURLWithPath: "/root", isDirectory: true)
+    let xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Workspace version = "1.0">
+         <FileRef location = "group:AppA/AppA.xcodeproj"></FileRef>
+         <FileRef location = "group:AppB/AppB.xcodeproj"></FileRef>
+      </Workspace>
+      """
+    XCTAssertEqual(
+      XcodeWorkspace.projectReferences(xcworkspacedataContents: data(xml), baseDir: base).map(\.path),
+      ["/root/AppA/AppA.xcodeproj", "/root/AppB/AppB.xcodeproj"]
+    )
+  }
+
+  func testProjectReferencesNestedGroupAccumulatesPrefix() {
+    let base = URL(fileURLWithPath: "/root", isDirectory: true)
+    let xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Workspace version = "1.0">
+         <Group location = "group:Modules">
+            <FileRef location = "group:MyLib/MyLib.xcodeproj"></FileRef>
+         </Group>
+      </Workspace>
+      """
+    XCTAssertEqual(
+      XcodeWorkspace.projectReferences(xcworkspacedataContents: data(xml), baseDir: base).map(\.path),
+      ["/root/Modules/MyLib/MyLib.xcodeproj"]
+    )
+  }
+
+  func testProjectReferencesContainerIgnoresGroupPrefix() {
+    let base = URL(fileURLWithPath: "/root", isDirectory: true)
+    let xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Workspace version = "1.0">
+         <Group location = "group:Modules">
+            <FileRef location = "container:Top.xcodeproj"></FileRef>
+         </Group>
+      </Workspace>
+      """
+    XCTAssertEqual(
+      XcodeWorkspace.projectReferences(xcworkspacedataContents: data(xml), baseDir: base).map(\.path),
+      ["/root/Top.xcodeproj"]
+    )
+  }
+
+  func testProjectReferencesIgnoresNonXcodeprojAndSelf() {
+    let base = URL(fileURLWithPath: "/root", isDirectory: true)
+    let xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Workspace version = "1.0">
+         <FileRef location = "self:"></FileRef>
+         <FileRef location = "group:Package.swift"></FileRef>
+         <FileRef location = "group:App/App.xcodeproj"></FileRef>
+      </Workspace>
+      """
+    XCTAssertEqual(
+      XcodeWorkspace.projectReferences(xcworkspacedataContents: data(xml), baseDir: base).map(\.path),
+      ["/root/App/App.xcodeproj"]
+    )
+  }
+
+  func testProjectReferencesDeduplicates() {
+    let base = URL(fileURLWithPath: "/root", isDirectory: true)
+    let xml = """
+      <?xml version="1.0" encoding="UTF-8"?>
+      <Workspace version = "1.0">
+         <FileRef location = "group:App/App.xcodeproj"></FileRef>
+         <FileRef location = "group:App/App.xcodeproj"></FileRef>
+      </Workspace>
+      """
+    XCTAssertEqual(
+      XcodeWorkspace.projectReferences(xcworkspacedataContents: data(xml), baseDir: base).map(\.path),
+      ["/root/App/App.xcodeproj"]
+    )
+  }
+
+  func testProjectReferencesEmptyForGarbage() {
+    let base = URL(fileURLWithPath: "/root", isDirectory: true)
+    XCTAssertEqual(XcodeWorkspace.projectReferences(xcworkspacedataContents: data("not xml <<<"), baseDir: base), [])
+    XCTAssertEqual(XcodeWorkspace.projectReferences(xcworkspacedataContents: Data(), baseDir: base), [])
+  }
   #endif
 }
