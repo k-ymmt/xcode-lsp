@@ -142,7 +142,7 @@ package actor XcodeBuildServer: BuiltInBuildServer {
       return BuildTarget(
         id: try BuildTargetIdentifier.createXcode(targetGUID: target.guid),
         displayName: target.name,
-        tags: [],
+        tags: target.isTestTarget ? [.test] : [],
         capabilities: BuildTargetCapabilities(),
         // Be conservative with the languages that might be used in the target. SourceKit-LSP doesn't use this property.
         languageIds: [.c, .cpp, .objective_c, .objective_cpp, .swift],

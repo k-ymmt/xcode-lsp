@@ -28,11 +28,16 @@ package struct XcodeTarget: Sendable, Equatable {
   package var name: String
   /// Supported platform names (e.g. "macosx", "iphonesimulator"). Empty if unknown.
   package var platforms: [String]
+  /// Whether this target builds a test bundle (unit-test or UI-testing product type).
+  package var isTestTarget: Bool
 
-  package init(guid: String, name: String, platforms: [String]) {
+  // `isTestTarget` defaults to `false` so existing call sites that don't care about it (e.g. the
+  // `resolveScheme` unit tests in `XcodeBuildServerTests.swift`) compile unchanged.
+  package init(guid: String, name: String, platforms: [String], isTestTarget: Bool = false) {
     self.guid = guid
     self.name = name
     self.platforms = platforms
+    self.isTestTarget = isTestTarget
   }
 }
 
@@ -135,8 +140,9 @@ package actor SwiftBuildSession {
     var result: [XcodeTarget] = []
     for targetInfo in info.targetInfos {
       let platforms = await supportedPlatforms(forTargetGUID: targetInfo.guid)
+      let isTest = await isTestTarget(forTargetGUID: targetInfo.guid)
       result.append(
-        XcodeTarget(guid: targetInfo.guid, name: targetInfo.targetName, platforms: platforms)
+        XcodeTarget(guid: targetInfo.guid, name: targetInfo.targetName, platforms: platforms, isTestTarget: isTest)
       )
     }
     return result
@@ -176,6 +182,25 @@ package actor SwiftBuildSession {
         overrides: [:]
       )
     } ?? []
+  }
+
+  /// Evaluate the target's `PRODUCT_TYPE` build setting and classify it as a test bundle or not.
+  ///
+  /// `PRODUCT_TYPE` does not depend on the active run destination, so this evaluates with build
+  /// parameters that set only the configuration. Returns `false` on failure so that an unevaluable
+  /// target is treated as a non-test target rather than failing target enumeration.
+  private func isTestTarget(forTargetGUID guid: String) async -> Bool {
+    var params = SWBBuildParameters()
+    params.configurationName = configuration
+    let identifier = await orLog("Evaluating PRODUCT_TYPE for target \(guid)") {
+      try await session.evaluateMacroAsString(
+        "PRODUCT_TYPE",
+        level: .target(guid),
+        buildParameters: params,
+        overrides: [:]
+      )
+    }
+    return Self.isTestProductType(identifier ?? "")
   }
 
   // MARK: Indexing info
@@ -370,6 +395,15 @@ package actor SwiftBuildSession {
       "iphoneos", "appletvos", "watchos",
     ]
     return order.first { set.contains($0) } ?? "macosx"
+  }
+
+  /// Whether a `PRODUCT_TYPE` identifier denotes a test bundle (unit-test or UI-testing).
+  ///
+  /// `package` (not `private`) so it is unit-testable from `BuildServerIntegrationTests`; it
+  /// touches no `SwiftBuild` types.
+  package static func isTestProductType(_ identifier: String) -> Bool {
+    identifier == "com.apple.product-type.bundle.unit-test"
+      || identifier == "com.apple.product-type.bundle.ui-testing"
   }
 
   /// Map a platform name to a run destination. Unknown names fall back to macOS.
