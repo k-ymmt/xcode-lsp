@@ -20,19 +20,53 @@ import FoundationXML
 /// Locates and parses Xcode `.xcscheme` files. SwiftBuild does not expose scheme discovery, so the
 /// build server reads schemes from disk itself. This type has no `import SwiftBuild` dependency.
 package enum XcodeScheme {
-  /// Locate the `.xcscheme` named `scheme` and return its `BuildAction` target names.
+  /// One `BuildableReference` parsed from a scheme's `BuildAction`, before container path resolution.
+  package struct SchemeBuildableReference: Hashable, Sendable {
+    /// The `BlueprintName` attribute (the target name).
+    package var blueprintName: String
+    /// The raw `ReferencedContainer` attribute (e.g. `container:AppA/AppA.xcodeproj`), or `nil` if absent.
+    package var referencedContainer: String?
+
+    package init(blueprintName: String, referencedContainer: String?) {
+      self.blueprintName = blueprintName
+      self.referencedContainer = referencedContainer
+    }
+  }
+
+  /// A scheme Build-action target with its `ReferencedContainer` resolved to an absolute `.xcodeproj` path.
+  package struct SchemeBuildTarget: Equatable, Sendable {
+    /// The target name (`BlueprintName`).
+    package var blueprintName: String
+    /// The owning `.xcodeproj` absolute path, or `nil` when no resolvable container was present.
+    package var container: URL?
+
+    package init(blueprintName: String, container: URL?) {
+      self.blueprintName = blueprintName
+      self.container = container
+    }
+  }
+
+  /// Locate the `.xcscheme` named `scheme` and return its `BuildAction` targets, with each
+  /// `ReferencedContainer` resolved to an absolute `.xcodeproj` path (relative to the directory of the
+  /// container the scheme file was found in). Returns `nil` if no matching file exists (the caller
+  /// then decides how to fall back).
   ///
   /// Search order: shared schemes (`xcshareddata/xcschemes`) before user schemes
   /// (`xcuserdata/*.xcuserdatad/xcschemes`). For a `.xcworkspace` container, member `.xcodeproj`s
-  /// under `projectRoot` are searched too. Returns `nil` if no matching file exists (the caller
-  /// then decides how to fall back).
-  package static func targetNames(scheme: String, containerPath: URL, projectRoot: URL) -> [String]? {
-    guard let url = schemeFileURL(scheme: scheme, containerPath: containerPath, projectRoot: projectRoot),
+  /// under `projectRoot` are searched too.
+  package static func buildTargets(scheme: String, containerPath: URL, projectRoot: URL) -> [SchemeBuildTarget]? {
+    guard let (url, container) = schemeFileURL(scheme: scheme, containerPath: containerPath, projectRoot: projectRoot),
       let data = try? Data(contentsOf: url)
     else {
       return nil
     }
-    return buildActionTargetNames(xcschemeContents: data)
+    let baseDir = container.deletingLastPathComponent()
+    return buildActionReferences(xcschemeContents: data).map { reference in
+      SchemeBuildTarget(
+        blueprintName: reference.blueprintName,
+        container: resolveContainer(reference.referencedContainer, relativeTo: baseDir)
+      )
+    }
   }
 
   /// Containers to search for scheme files: the container itself, plus (for a workspace) member
@@ -47,7 +81,11 @@ package enum XcodeScheme {
     return containers
   }
 
-  private static func schemeFileURL(scheme: String, containerPath: URL, projectRoot: URL) -> URL? {
+  private static func schemeFileURL(
+    scheme: String,
+    containerPath: URL,
+    projectRoot: URL
+  ) -> (url: URL, container: URL)? {
     let fm = FileManager.default
     let containers = searchContainers(containerPath: containerPath, projectRoot: projectRoot)
 
@@ -55,7 +93,7 @@ package enum XcodeScheme {
     for container in containers {
       let shared = container.appendingPathComponent("xcshareddata/xcschemes/\(scheme).xcscheme", isDirectory: false)
       if fm.fileExists(atPath: shared.path) {
-        return shared
+        return (shared, container)
       }
     }
     // Then user schemes: xcuserdata/<anything>.xcuserdatad/xcschemes/<name>.xcscheme
@@ -67,30 +105,29 @@ package enum XcodeScheme {
       for dir in userDirs where dir.pathExtension == "xcuserdatad" {
         let candidate = dir.appendingPathComponent("xcschemes/\(scheme).xcscheme", isDirectory: false)
         if fm.fileExists(atPath: candidate.path) {
-          return candidate
+          return (candidate, container)
         }
       }
     }
     return nil
   }
 
-  /// Extract the target names (`BlueprintName`) referenced by a scheme's `BuildAction`.
-  ///
-  /// Only `BuildableReference`s nested inside `<BuildAction>` are considered; references in
-  /// `TestAction`/`LaunchAction`/etc. are ignored. Returned names are de-duplicated, preserving order.
-  package static func buildActionTargetNames(xcschemeContents: Data) -> [String] {
+  /// Extract the `BuildableReference`s (name + `ReferencedContainer`) referenced by a scheme's
+  /// `BuildAction`. References in `TestAction`/`LaunchAction`/etc. are ignored. De-duplicated by
+  /// (name, container) pair, preserving order.
+  package static func buildActionReferences(xcschemeContents: Data) -> [SchemeBuildableReference] {
     let parser = XMLParser(data: xcschemeContents)
     let delegate = BuildActionDelegate()
     parser.delegate = delegate
     parser.parse()
-    var seen = Set<String>()
-    return delegate.names.filter { seen.insert($0).inserted }
+    var seen = Set<SchemeBuildableReference>()
+    return delegate.references.filter { seen.insert($0).inserted }
   }
 
   /// Resolve a scheme `BuildableReference`'s `ReferencedContainer` (e.g. `container:AppA/AppA.xcodeproj`)
   /// to an absolute `.xcodeproj` URL, relative to `baseDir` (the directory holding the container that owns
   /// the scheme file). Returns `nil` when the attribute is absent, not `container:`-prefixed, or empty —
-  /// callers then fall back to matching by target name alone.
+  /// callers may fall back to matching by target name alone.
   ///
   /// Uses `standardizedFileURL` (resolves `.`/`..` but not symlinks) so the result stays comparable to the
   /// caller-supplied `baseDir`; symlink canonicalization happens later in `XcodeBuildServer.resolveScheme`.
@@ -107,7 +144,7 @@ package enum XcodeScheme {
 }
 
 private final class BuildActionDelegate: NSObject, XMLParserDelegate {
-  var names: [String] = []
+  var references: [XcodeScheme.SchemeBuildableReference] = []
   private var inBuildAction = false
 
   func parser(
@@ -122,7 +159,12 @@ private final class BuildActionDelegate: NSObject, XMLParserDelegate {
       inBuildAction = true
     case "BuildableReference":
       if inBuildAction, let name = attributeDict["BlueprintName"] {
-        names.append(name)
+        references.append(
+          XcodeScheme.SchemeBuildableReference(
+            blueprintName: name,
+            referencedContainer: attributeDict["ReferencedContainer"]
+          )
+        )
       }
     default:
       break

@@ -91,12 +91,12 @@ package actor XcodeBuildServer: BuiltInBuildServer {
     guard let scheme else {
       return all
     }
-    let schemeTargetNames = XcodeScheme.targetNames(
+    let schemeTargets = XcodeScheme.buildTargets(
       scheme: scheme,
       containerPath: containerPath,
       projectRoot: projectRoot
     )
-    switch Self.resolveScheme(named: scheme, schemeTargetNames: schemeTargetNames, allTargets: all) {
+    switch Self.resolveScheme(named: scheme, schemeTargetNames: schemeTargets?.map(\.blueprintName), allTargets: all) {
     case .seeds(let seedGUIDs):
       let closure = Set(try await session.dependencyClosure(forTargetGUIDs: seedGUIDs))
       let scoped = all.filter { closure.contains($0.guid) }
