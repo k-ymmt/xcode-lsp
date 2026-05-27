@@ -245,6 +245,37 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  // MARK: - dependencyIdentifiers
+
+  func testDependencyIdentifiersFiltersOutOfScopeGUIDs() throws {
+    let graph = ["G_App": ["G_Fw", "G_External"]]
+    let ids = try XcodeBuildServer.dependencyIdentifiers(
+      forTargetGUID: "G_App",
+      graph: graph,
+      scopedGUIDs: ["G_App", "G_Fw"]
+    )
+    XCTAssertEqual(try ids.map { try $0.xcodeTargetGUID }, ["G_Fw"])
+  }
+
+  func testDependencyIdentifiersAreSortedForDeterminism() throws {
+    let graph = ["G_App": ["G_Z", "G_A"]]
+    let ids = try XcodeBuildServer.dependencyIdentifiers(
+      forTargetGUID: "G_App",
+      graph: graph,
+      scopedGUIDs: ["G_A", "G_Z"]
+    )
+    XCTAssertEqual(try ids.map { try $0.xcodeTargetGUID }, ["G_A", "G_Z"])
+  }
+
+  func testDependencyIdentifiersEmptyWhenNoEntry() throws {
+    let ids = try XcodeBuildServer.dependencyIdentifiers(
+      forTargetGUID: "G_Unknown",
+      graph: [:],
+      scopedGUIDs: ["G_App"]
+    )
+    XCTAssertTrue(ids.isEmpty)
+  }
+
   private func temporaryDirectory() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent("xcode-bs-\(UUID().uuidString)")
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

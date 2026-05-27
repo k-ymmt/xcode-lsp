@@ -307,6 +307,18 @@ extension XcodeBuildServer {
     return rootProjectPaths.contains { normalized($0) == normalizedProjectPath }
   }
 
+  /// The BSP identifiers of `guid`'s direct dependencies, restricted to targets in `scopedGUIDs` so we
+  /// never reference a target outside the build server's target list (e.g. when a scheme has scoped the
+  /// workspace to a subset). Sorted by GUID for deterministic output.
+  package static func dependencyIdentifiers(
+    forTargetGUID guid: String,
+    graph: [String: [String]],
+    scopedGUIDs: Set<String>
+  ) throws -> [BuildTargetIdentifier] {
+    let direct = (graph[guid] ?? []).filter { scopedGUIDs.contains($0) }.sorted()
+    return try direct.map { try BuildTargetIdentifier.createXcode(targetGUID: $0) }
+  }
+
   /// Decide which targets a scheme scopes to, purely from already-loaded data.
   ///
   /// - `schemeTargetNames`: Build-action target names from the `.xcscheme` file, or `nil` if no file
