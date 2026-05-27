@@ -627,6 +627,43 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// A target built from a SwiftPM package dependency (`MyLib`) is tagged `.dependency`, while the
+  /// opened project's own target (`MyApp`) is not. This is the direct regression test for gap #4.
+  func testPackageDependencyTargetIsTaggedDependency() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithPackageDependency, sourceContents: "import MyLib\nlet x = 1\n")
+    defer { project.keepAlive() }
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = response.targets.map { $0.displayName ?? "?" }
+    let packageTarget = try XCTUnwrap(
+      response.targets.first { $0.displayName == "MyLib" },
+      "expected a MyLib package-product target, got \(names)"
+    )
+    let appTarget = try XCTUnwrap(
+      response.targets.first { $0.displayName == "MyApp" },
+      "expected a MyApp target, got \(names)"
+    )
+    XCTAssertTrue(
+      packageTarget.tags.contains(.dependency),
+      "expected MyLib (SwiftPM package) to be tagged .dependency, got \(packageTarget.tags)"
+    )
+    XCTAssertFalse(
+      appTarget.tags.contains(.dependency),
+      "expected MyApp (root project) to NOT be tagged .dependency, got \(appTarget.tags)"
+    )
+  }
+
   /// Test 5: a unit-test target is tagged `.test` while a non-test target is not. This is what
   /// drives `mayContainTests`, and therefore SourceKit-LSP test discovery, for Xcode projects.
   func testTestTargetIsTaggedAsTest() async throws {

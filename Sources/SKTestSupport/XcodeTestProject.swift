@@ -20,7 +20,9 @@ package import Foundation
 /// `App/main.swift`) depending on `Framework` (a macOS framework with `Framework/Framework.swift`).
 /// `.appWithUnitTestTarget` produces two targets: a macOS command-line tool `MyApp` (with `main.swift`)
 /// and a unit-test bundle `MyAppTests` (`com.apple.product-type.bundle.unit-test`, with
-/// `MyAppTests/MyAppTests.swift`).
+/// `MyAppTests/MyAppTests.swift`). `.appWithPackageDependency` produces a macOS command-line tool `MyApp`
+/// (with `main.swift`) that depends on a local SwiftPM package `MyPackage` exposing the library product
+/// `MyLib`.
 ///
 /// The temporary directory is removed when the `XcodeTestProject` is deinitialized, unless the
 /// `SOURCEKIT_LSP_KEEP_TEST_SCRATCH_DIR` environment variable is set.
@@ -34,8 +36,8 @@ package final class XcodeTestProject {
   package let xcodeprojURL: URL
 
   /// The primary Swift source file whose contents are the `sourceContents` passed to ``init``. For
-  /// `.macOSCommandLineTool`, `.iOSApp`, and `.appWithUnitTestTarget` this is `main.swift` at the project root; for
-  /// `.appWithFrameworkDependency` it is `App/main.swift`.
+  /// `.macOSCommandLineTool`, `.iOSApp`, `.appWithUnitTestTarget`, and `.appWithPackageDependency` this is
+  /// `main.swift` at the project root; for `.appWithFrameworkDependency` it is `App/main.swift`.
   package let sourceFileURL: URL
 
   private let fileManager: FileManager
@@ -52,6 +54,9 @@ package final class XcodeTestProject {
     /// A macOS project with a command-line tool `MyApp` and a unit-test bundle `MyAppTests`
     /// (`com.apple.product-type.bundle.unit-test`). Used to verify test-target tagging.
     case appWithUnitTestTarget
+    /// A macOS command-line tool `MyApp` (with `main.swift` importing `MyLib`) that depends on a local
+    /// SwiftPM package `MyPackage` exposing a library product `MyLib`. Exercises `.dependency` tagging.
+    case appWithPackageDependency
   }
 
   /// The validated `project.pbxproj` template for a macOS command-line tool target named `MyApp` with a single
@@ -1014,6 +1019,225 @@ package final class XcodeTestProject {
 
 """
 
+  /// The validated `project.pbxproj` template for a macOS command-line tool target named `MyApp` (source
+  /// `main.swift`) that depends on a local SwiftPM package `MyPackage` (sibling directory `MyPackage`,
+  /// referenced via an `XCLocalSwiftPackageReference` with `relativePath = MyPackage`) exposing a library
+  /// product `MyLib` (consumed via an `XCSwiftPackageProductDependency`). When this project is opened as the
+  /// container, SwiftBuild creates a separate project for `MyPackage` (its `PROJECT_FILE_PATH` is the
+  /// package's `Package.swift`, outside `MyApp.xcodeproj`), so the `MyLib` product target is classified as a
+  /// `.dependency`, while `MyApp` is not.
+  ///
+  /// This content is byte-identical to a `project.pbxproj` that was verified with
+  /// `xcodebuild -list`, `xcodebuild -dumpPIF`, and `plutil -lint` using Xcode 26.4 (objectVersion 56).
+  ///
+  /// - Important: The leading indentation of the lines below uses tabs, matching what Xcode writes. The closing
+  ///   delimiter of the multi-line string literal is placed at column zero so that Swift does not strip the leading
+  ///   tabs from the embedded content.
+  // swift-format-ignore
+  package static let appWithPackageDependencyPbxprojTemplate: String = """
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		A100000000000000000000B1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A1 /* main.swift */; };
+		A100000000000000000000B3 /* MyLib in Frameworks */ = {isa = PBXBuildFile; productRef = A100000000000000000000E3 /* MyLib */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		A100000000000000000000A1 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		A100000000000000000000A2 /* MyApp */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = MyApp; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A100000000000000000000C1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000000000000000000B3 /* MyLib in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A100000000000000000000D1 = {
+			isa = PBXGroup;
+			children = (
+				A100000000000000000000A1 /* main.swift */,
+				A100000000000000000000D2 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A100000000000000000000D2 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A100000000000000000000A2 /* MyApp */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A100000000000000000000E1 /* MyApp */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A100000000000000000000F1 /* Build configuration list for PBXNativeTarget "MyApp" */;
+			buildPhases = (
+				A100000000000000000000C2 /* Sources */,
+				A100000000000000000000C1 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = MyApp;
+			packageProductDependencies = (
+				A100000000000000000000E3 /* MyLib */,
+			);
+			productName = MyApp;
+			productReference = A100000000000000000000A2 /* MyApp */;
+			productType = "com.apple.product-type.tool";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A100000000000000000000B0 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2640;
+				LastUpgradeCheck = 2640;
+				TargetAttributes = {
+					A100000000000000000000E1 = {
+						CreatedOnToolsVersion = 26.4;
+					};
+				};
+			};
+			buildConfigurationList = A100000000000000000000F0 /* Build configuration list for PBXProject "MyApp" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A100000000000000000000D1;
+			packageReferences = (
+				A100000000000000000000E2 /* XCLocalSwiftPackageReference "MyPackage" */,
+			);
+			productRefGroup = A100000000000000000000D2 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A100000000000000000000E1 /* MyApp */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A100000000000000000000C2 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A100000000000000000000B1 /* main.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		A100000000000000000000F2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A100000000000000000000F3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				MACOSX_DEPLOYMENT_TARGET = 13.0;
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A100000000000000000000F4 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A100000000000000000000F5 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A100000000000000000000F0 /* Build configuration list for PBXProject "MyApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100000000000000000000F2 /* Debug */,
+				A100000000000000000000F3 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A100000000000000000000F1 /* Build configuration list for PBXNativeTarget "MyApp" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A100000000000000000000F4 /* Debug */,
+				A100000000000000000000F5 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		A100000000000000000000E2 /* XCLocalSwiftPackageReference "MyPackage" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = MyPackage;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		A100000000000000000000E3 /* MyLib */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = MyLib;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = A100000000000000000000B0 /* Project object */;
+}
+
+"""
+
   /// Creates a minimal Xcode project on disk in a fresh temporary directory.
   ///
   /// - Parameters:
@@ -1042,7 +1266,7 @@ package final class XcodeTestProject {
     // The `.appWithFrameworkDependency` project references its sources under per-target subdirectories
     // (`App/main.swift` and `Framework/Framework.swift`); every other kind keeps `main.swift` at the project root.
     switch kind {
-    case .macOSCommandLineTool, .iOSApp, .appWithUnitTestTarget:
+    case .macOSCommandLineTool, .iOSApp, .appWithUnitTestTarget, .appWithPackageDependency:
       self.sourceFileURL = root.appendingPathComponent("main.swift", isDirectory: false)
     case .appWithFrameworkDependency:
       self.sourceFileURL =
@@ -1058,6 +1282,7 @@ package final class XcodeTestProject {
     case .iOSApp: template = Self.iOSAppPbxprojTemplate
     case .appWithFrameworkDependency: template = Self.appWithFrameworkPbxprojTemplate
     case .appWithUnitTestTarget: template = Self.appWithUnitTestPbxprojTemplate
+    case .appWithPackageDependency: template = Self.appWithPackageDependencyPbxprojTemplate
     }
     try template.write(
       to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
@@ -1094,6 +1319,33 @@ package final class XcodeTestProject {
       )
       try "import XCTest\n\nfinal class MyAppTests: XCTestCase {\n  func testExample() throws {}\n}\n"
         .write(to: testSourceURL, atomically: true, encoding: .utf8)
+    }
+
+    if case .appWithPackageDependency = kind {
+      let packageRoot = root.appendingPathComponent("MyPackage", isDirectory: true)
+      let libSourceDir = packageRoot.appendingPathComponent("Sources/MyLib", isDirectory: true)
+      try fileManager.createDirectory(at: libSourceDir, withIntermediateDirectories: true)
+      try """
+      // swift-tools-version:5.9
+      import PackageDescription
+
+      let package = Package(
+        name: "MyPackage",
+        products: [.library(name: "MyLib", targets: ["MyLib"])],
+        targets: [.target(name: "MyLib")]
+      )
+      """
+      .write(
+        to: packageRoot.appendingPathComponent("Package.swift", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
+      try "public func myLibEntry() {}\n"
+        .write(
+          to: libSourceDir.appendingPathComponent("MyLib.swift", isDirectory: false),
+          atomically: true,
+          encoding: .utf8
+        )
     }
   }
 
