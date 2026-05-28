@@ -294,6 +294,33 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  // MARK: - expandedRootProjects
+
+  func testExpandsTransitiveProjectReferences() {
+    let a = URL(fileURLWithPath: "/proj/A.xcodeproj")
+    let b = URL(fileURLWithPath: "/proj/B.xcodeproj")
+    let c = URL(fileURLWithPath: "/proj/C.xcodeproj")
+    let refs: [String: [URL]] = ["/proj/A.xcodeproj": [b], "/proj/B.xcodeproj": [c]]
+    let expanded = XcodeBuildServer.expandedRootProjects(seeds: [a]) { refs[$0.path] ?? [] }
+    XCTAssertEqual(Set(expanded.map(\.path)), ["/proj/A.xcodeproj", "/proj/B.xcodeproj", "/proj/C.xcodeproj"])
+  }
+
+  func testExpandedRootProjectsBreaksCycles() {
+    let a = URL(fileURLWithPath: "/proj/A.xcodeproj")
+    let b = URL(fileURLWithPath: "/proj/B.xcodeproj")
+    let refs: [String: [URL]] = ["/proj/A.xcodeproj": [b], "/proj/B.xcodeproj": [a]]
+    let expanded = XcodeBuildServer.expandedRootProjects(seeds: [a]) { refs[$0.path] ?? [] }
+    XCTAssertEqual(Set(expanded.map(\.path)), ["/proj/A.xcodeproj", "/proj/B.xcodeproj"])
+  }
+
+  func testExpandedRootProjectsDedupesAcrossSeeds() {
+    let a = URL(fileURLWithPath: "/proj/A.xcodeproj")
+    let b = URL(fileURLWithPath: "/proj/B.xcodeproj")
+    let refs: [String: [URL]] = ["/proj/A.xcodeproj": [b]]
+    let expanded = XcodeBuildServer.expandedRootProjects(seeds: [a, b]) { refs[$0.path] ?? [] }
+    XCTAssertEqual(Set(expanded.map(\.path)), ["/proj/A.xcodeproj", "/proj/B.xcodeproj"])
+  }
+
   // MARK: - dependencyIdentifiers
 
   func testDependencyIdentifiersFiltersOutOfScopeGUIDs() throws {
