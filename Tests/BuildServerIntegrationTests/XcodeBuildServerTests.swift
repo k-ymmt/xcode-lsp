@@ -876,6 +876,28 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// The `.appWithProjectReference` fixture exposes its project-referenced Framework.xcodeproj, and a scheme
+  /// can be authored into it; the scheme parser then finds it among the search containers and resolves its
+  /// container relative to that project's directory.
+  func testWriteSharedSchemeInReferencedProject() throws {
+    let project = try XcodeTestProject(kind: .appWithProjectReference, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    let frameworkURL = try XCTUnwrap(project.referencedProjectURL)
+    try project.writeSharedScheme(
+      named: "FwScheme",
+      inProject: frameworkURL,
+      buildTargets: [(blueprintName: "Framework", container: "Framework.xcodeproj")]
+    )
+    let result = try XCTUnwrap(
+      XcodeScheme.buildTargets(scheme: "FwScheme", searchContainers: [project.xcodeprojURL, frameworkURL])
+    )
+    XCTAssertEqual(result.map(\.blueprintName), ["Framework"])
+    XCTAssertEqual(
+      result.first?.container?.standardizedFileURL.path,
+      frameworkURL.standardizedFileURL.path
+    )
+  }
+
   /// Test 5: a unit-test target is tagged `.test` while a non-test target is not. This is what
   /// drives `mayContainTests`, and therefore SourceKit-LSP test discovery, for Xcode projects.
   func testTestTargetIsTaggedAsTest() async throws {
