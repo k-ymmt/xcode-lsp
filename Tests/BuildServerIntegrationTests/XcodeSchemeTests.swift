@@ -232,6 +232,25 @@ final class XcodeSchemeTests: XCTestCase {
     )
   }
 
+  func testBuildTargetsResolvesCrossProjectContainerFromProjectScheme() throws {
+    // A scheme that lives in the opened MyApp.xcodeproj references a target in a project-referenced
+    // Framework/Framework.xcodeproj. The container resolves relative to the scheme-owning project's dir.
+    let root = try makeTempDir()
+    let opened = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+    try writeSchemeWithContainer(
+      "Cross",
+      into: opened.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      blueprintName: "Framework",
+      container: "Framework/Framework.xcodeproj"
+    )
+    let result = try XCTUnwrap(XcodeScheme.buildTargets(scheme: "Cross", searchContainers: [opened]))
+    XCTAssertEqual(result.first?.blueprintName, "Framework")
+    XCTAssertEqual(
+      result.first?.container?.standardizedFileURL.path,
+      root.appendingPathComponent("Framework/Framework.xcodeproj").standardizedFileURL.path
+    )
+  }
+
   // MARK: - resolveContainer
 
   func testResolveContainerResolvesRelativeToBaseDir() {
