@@ -353,6 +353,20 @@ extension XcodeBuildServer {
     url.resolvingSymlinksInPath().path
   }
 
+  /// The ordered, de-duplicated list of containers to search for `.xcscheme` files: the opened
+  /// `containerPath` first (so it wins on scheme-name collisions), followed by every root `.xcodeproj`
+  /// in `rootProjects` sorted by path. `rootProjects` is the project-reference-expanded root set from
+  /// `rootProjectPaths()`; the opened container is removed from the tail via `normalizedPath` so it is
+  /// not searched twice. `package` so the ordering is unit-testable without disk I/O.
+  package static func orderedSchemeSearchContainers(containerPath: URL, rootProjects: Set<URL>) -> [URL] {
+    var result: [URL] = [containerPath]
+    var seen: Set<String> = [normalizedPath(containerPath)]
+    for url in rootProjects.sorted(by: { $0.path < $1.path }) where seen.insert(normalizedPath(url)).inserted {
+      result.append(url)
+    }
+    return result
+  }
+
   /// Expand a seed set of `.xcodeproj` paths by transitively following project references, so that the
   /// project the user opened — and every other `.xcodeproj` it project-references (directly or
   /// transitively) — counts as part of the root project. `referencedProjects` returns the direct project

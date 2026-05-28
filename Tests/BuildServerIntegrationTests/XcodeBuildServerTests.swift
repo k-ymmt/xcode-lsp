@@ -321,6 +321,24 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertEqual(Set(expanded.map(\.path)), ["/proj/A.xcodeproj", "/proj/B.xcodeproj"])
   }
 
+  // MARK: - orderedSchemeSearchContainers
+
+  func testOrderedSchemeSearchContainersPutsOpenedFirstThenSortedDeduped() {
+    let opened = URL(fileURLWithPath: "/proj/MyApp.xcodeproj")
+    let framework = URL(fileURLWithPath: "/proj/Framework/Framework.xcodeproj")
+    let lib = URL(fileURLWithPath: "/proj/Aaa/Lib.xcodeproj")
+    let result = XcodeBuildServer.orderedSchemeSearchContainers(
+      containerPath: opened,
+      // `opened` is also present in the root set and must be de-duplicated (not appended again).
+      rootProjects: [opened, framework, lib]
+    )
+    XCTAssertEqual(
+      result.map(\.path),
+      ["/proj/MyApp.xcodeproj", "/proj/Aaa/Lib.xcodeproj", "/proj/Framework/Framework.xcodeproj"],
+      "opened container first, then the rest sorted by path with the opened container de-duplicated"
+    )
+  }
+
   // MARK: - dependencyIdentifiers
 
   func testDependencyIdentifiersFiltersOutOfScopeGUIDs() throws {
