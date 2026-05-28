@@ -94,8 +94,7 @@ package actor XcodeBuildServer: BuiltInBuildServer {
     }
     let schemeTargets = XcodeScheme.buildTargets(
       scheme: scheme,
-      containerPath: containerPath,
-      projectRoot: projectRoot
+      searchContainers: schemeSearchContainers()
     )
     switch Self.resolveScheme(named: scheme, schemeTargets: schemeTargets, allTargets: all) {
     case .seeds(let seedGUIDs):
@@ -161,6 +160,15 @@ package actor XcodeBuildServer: BuiltInBuildServer {
         FileManager.default.fileExists(atPath: $0.path)
       }
     }
+  }
+
+  /// Containers to search for `.xcscheme` files: the opened container first, then every root `.xcodeproj`
+  /// (workspace members plus transitively project-referenced projects) from `rootProjectPaths()`. Schemes
+  /// can live in the opened workspace/project or in any project it reaches through project references, so
+  /// all of them are scheme-file candidates; the opened container is searched first so it wins on
+  /// scheme-name collisions.
+  private func schemeSearchContainers() -> [URL] {
+    Self.orderedSchemeSearchContainers(containerPath: containerPath, rootProjects: rootProjectPaths())
   }
 
   // MARK: BuiltInBuildServer
