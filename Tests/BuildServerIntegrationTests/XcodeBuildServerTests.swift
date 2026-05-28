@@ -294,6 +294,33 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  // MARK: - expandedRootProjects
+
+  func testExpandsTransitiveProjectReferences() {
+    let a = URL(fileURLWithPath: "/proj/A.xcodeproj")
+    let b = URL(fileURLWithPath: "/proj/B.xcodeproj")
+    let c = URL(fileURLWithPath: "/proj/C.xcodeproj")
+    let refs: [String: [URL]] = ["/proj/A.xcodeproj": [b], "/proj/B.xcodeproj": [c]]
+    let expanded = XcodeBuildServer.expandedRootProjects(seeds: [a]) { refs[$0.path] ?? [] }
+    XCTAssertEqual(Set(expanded.map(\.path)), ["/proj/A.xcodeproj", "/proj/B.xcodeproj", "/proj/C.xcodeproj"])
+  }
+
+  func testExpandedRootProjectsBreaksCycles() {
+    let a = URL(fileURLWithPath: "/proj/A.xcodeproj")
+    let b = URL(fileURLWithPath: "/proj/B.xcodeproj")
+    let refs: [String: [URL]] = ["/proj/A.xcodeproj": [b], "/proj/B.xcodeproj": [a]]
+    let expanded = XcodeBuildServer.expandedRootProjects(seeds: [a]) { refs[$0.path] ?? [] }
+    XCTAssertEqual(Set(expanded.map(\.path)), ["/proj/A.xcodeproj", "/proj/B.xcodeproj"])
+  }
+
+  func testExpandedRootProjectsDedupesAcrossSeeds() {
+    let a = URL(fileURLWithPath: "/proj/A.xcodeproj")
+    let b = URL(fileURLWithPath: "/proj/B.xcodeproj")
+    let refs: [String: [URL]] = ["/proj/A.xcodeproj": [b]]
+    let expanded = XcodeBuildServer.expandedRootProjects(seeds: [a, b]) { refs[$0.path] ?? [] }
+    XCTAssertEqual(Set(expanded.map(\.path)), ["/proj/A.xcodeproj", "/proj/B.xcodeproj"])
+  }
+
   // MARK: - dependencyIdentifiers
 
   func testDependencyIdentifiersFiltersOutOfScopeGUIDs() throws {
@@ -789,6 +816,45 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertFalse(
       appTarget.tags.contains(.dependency),
       "expected MyApp (root project) to NOT be tagged .dependency, got \(appTarget.tags)"
+    )
+  }
+
+  /// The opened `MyApp.xcodeproj` project-references `Framework/Framework.xcodeproj`. SwiftBuild surfaces
+  /// the `Framework` target, and because `rootProjectPaths()` follows the project reference, that target
+  /// is treated as root and NOT tagged `.dependency`. Before following project references, `Framework`'s
+  /// PROJECT_FILE_PATH fell outside the root set and was mis-tagged — this is the regression test for it.
+  func testProjectReferencedTargetIsNotTaggedDependency() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithProjectReference, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+
+    // The fixture's pbxproj is real OpenStep; confirm the parser resolves the reference off disk (macOS).
+    let referenced = XcodeProject.referencedProjects(ofProjectAt: project.xcodeprojURL)
+    XCTAssertEqual(
+      referenced.map { $0.standardizedFileURL.lastPathComponent },
+      ["Framework.xcodeproj"],
+      "expected MyApp.xcodeproj to project-reference Framework.xcodeproj, got \(referenced)"
+    )
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = response.targets.map { $0.displayName ?? "?" }
+    let frameworkTarget = try XCTUnwrap(
+      response.targets.first { $0.displayName == "Framework" },
+      "expected a project-referenced Framework target, got \(names)"
+    )
+    XCTAssertFalse(
+      frameworkTarget.tags.contains(.dependency),
+      "expected project-referenced Framework to NOT be tagged .dependency, got \(frameworkTarget.tags)"
     )
   }
 

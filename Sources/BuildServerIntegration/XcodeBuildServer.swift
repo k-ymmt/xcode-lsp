@@ -137,21 +137,30 @@ package actor XcodeBuildServer: BuiltInBuildServer {
   }
 
   /// The set of `.xcodeproj` paths considered part of the project the user opened: the container itself
-  /// for an `.xcodeproj`, or the member `.xcodeproj`s declared in its `contents.xcworkspacedata` for an `.xcworkspace`.
-  /// A target whose owning project is outside this set (e.g. a SwiftPM package) is tagged `.dependency`.
+  /// for an `.xcodeproj` (or the member `.xcodeproj`s of an `.xcworkspace`), plus every `.xcodeproj` they
+  /// reach transitively through `PBXProject.projectReferences`. A target whose owning project is outside
+  /// this set (e.g. a SwiftPM package, which is not a project reference) is tagged `.dependency`.
   private func rootProjectPaths() -> Set<URL> {
+    let seeds: Set<URL>
     if containerPath.pathExtension == "xcworkspace" {
       if let members = XcodeWorkspace.memberProjects(workspaceURL: containerPath) {
-        return Set(members)
+        seeds = Set(members)
+      } else {
+        // Fallback when contents.xcworkspacedata is absent/unreadable: previous top-level scan behavior.
+        let entries =
+          orLog("Enumerating member projects under \(projectRoot.path)") {
+            try FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil)
+          } ?? []
+        seeds = Set(entries.filter { $0.pathExtension == "xcodeproj" })
       }
-      // Fallback when contents.xcworkspacedata is absent/unreadable: previous top-level scan behavior.
-      let entries =
-        orLog("Enumerating member projects under \(projectRoot.path)") {
-          try FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil)
-        } ?? []
-      return Set(entries.filter { $0.pathExtension == "xcodeproj" })
+    } else {
+      seeds = [containerPath]
     }
-    return [containerPath]
+    return Self.expandedRootProjects(seeds: seeds) { projectURL in
+      XcodeProject.referencedProjects(ofProjectAt: projectURL).filter {
+        FileManager.default.fileExists(atPath: $0.path)
+      }
+    }
   }
 
   // MARK: BuiltInBuildServer
@@ -342,6 +351,33 @@ extension XcodeBuildServer {
   /// `isPartOfRootProject` and `resolveScheme`'s container matching.
   package static func normalizedPath(_ url: URL) -> String {
     url.resolvingSymlinksInPath().path
+  }
+
+  /// Expand a seed set of `.xcodeproj` paths by transitively following project references, so that the
+  /// project the user opened — and every other `.xcodeproj` it project-references (directly or
+  /// transitively) — counts as part of the root project. `referencedProjects` returns the direct project
+  /// references of one `.xcodeproj` (resolved, and in production existence-filtered). Cycles and duplicate
+  /// seeds are handled by tracking visited projects via `normalizedPath`.
+  package static func expandedRootProjects(
+    seeds: Set<URL>,
+    referencedProjects: (URL) -> [URL]
+  ) -> Set<URL> {
+    var byKey: [String: URL] = [:]
+    var queue: [URL] = []
+    for seed in seeds where byKey[normalizedPath(seed)] == nil {
+      byKey[normalizedPath(seed)] = seed
+      queue.append(seed)
+    }
+    while let current = queue.popLast() {
+      for referenced in referencedProjects(current) {
+        let key = normalizedPath(referenced)
+        if byKey[key] == nil {
+          byKey[key] = referenced
+          queue.append(referenced)
+        }
+      }
+    }
+    return Set(byKey.values)
   }
 
   /// The BSP identifiers of `guid`'s direct dependencies, restricted to targets in `scopedGUIDs` so we
