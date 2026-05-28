@@ -799,10 +799,11 @@ var dependencies: [Package.Dependency] {
       .package(path: "../swift-argument-parser"),
       .package(path: "../swift-syntax"),
       .package(path: "../swift-crypto"),
-    ] + swiftPMDependency([
-      .package(name: "swift-package-manager", path: "../swiftpm"),
-      .package(name: "swift-build", path: "../swift-build"),
-    ])
+    ]
+      + swiftPMDependency([
+        .package(name: "swift-package-manager", path: "../swiftpm"),
+        .package(name: "swift-build", path: "../swift-build"),
+      ])
   } else {
     let relatedDependenciesBranch = "main"
 
