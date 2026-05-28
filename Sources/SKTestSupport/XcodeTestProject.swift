@@ -26,7 +26,10 @@ package import Foundation
 /// `.xcodeproj`s (`AppA/AppA.xcodeproj`, `AppB/AppB.xcodeproj`), each with a target named `App`.
 /// `.workspaceWithNestedProject` produces a `.xcworkspace` bundling a root `MyApp.xcodeproj` (target
 /// `MyApp`) and a subdirectory `Modules/App/App.xcodeproj` (target `App`) referenced via a nested
-/// `<Group>`, exercising subdirectory member-project resolution.
+/// `<Group>`, exercising subdirectory member-project resolution. `.appWithProjectReference` produces a
+/// `MyApp.xcodeproj` (target `MyApp`) that project-references a separate `Framework/Framework.xcodeproj`
+/// (target `Framework`), exercising that a project-referenced project's targets are treated as root (not
+/// `.dependency`).
 ///
 /// The temporary directory is removed when the `XcodeTestProject` is deinitialized, unless the
 /// `SOURCEKIT_LSP_KEEP_TEST_SCRATCH_DIR` environment variable is set.
@@ -40,12 +43,14 @@ package final class XcodeTestProject {
   package let xcodeprojURL: URL
 
   /// The primary Swift source file whose contents are the `sourceContents` passed to ``init``. For
-  /// `.macOSCommandLineTool`, `.iOSApp`, `.appWithUnitTestTarget`, and `.appWithPackageDependency` this is
-  /// `main.swift` at the project root; for `.appWithFrameworkDependency` it is `App/main.swift`.
+  /// `.macOSCommandLineTool`, `.iOSApp`, `.appWithUnitTestTarget`, `.appWithPackageDependency`,
+  /// `.workspaceWithNestedProject`, and `.appWithProjectReference` this is `main.swift` at the project root;
+  /// for `.appWithFrameworkDependency` it is `App/main.swift`.
   package let sourceFileURL: URL
 
-  /// For workspace kinds (`.workspaceWithDuplicateTargetNames`, `.workspaceWithNestedProject`), the
-  /// `.xcworkspace` container path; `nil` for single-project kinds.
+  /// The `.xcworkspace` container path, or `nil` if this project has no workspace. Non-nil only for workspace
+  /// kinds (`.workspaceWithDuplicateTargetNames`, `.workspaceWithNestedProject`); `nil` for all other kinds,
+  /// including `.appWithProjectReference`.
   /// Used as the base directory for ``writeWorkspaceSharedScheme(named:buildTargets:)``.
   package let workspaceURL: URL?
 
@@ -74,6 +79,10 @@ package final class XcodeTestProject {
     /// project (`Modules/App/App.xcodeproj`, target `App`), the latter referenced via a nested `<Group>`
     /// in `contents.xcworkspacedata`. Exercises subdirectory member-project resolution.
     case workspaceWithNestedProject
+    /// A `MyApp.xcodeproj` (target `MyApp`, a macOS command-line tool) that project-references a separate
+    /// `Framework/Framework.xcodeproj` (target `Framework`, a macOS framework) via a `projectReferences`
+    /// entry. Exercises that a project-referenced project's targets are treated as root (not `.dependency`).
+    case appWithProjectReference
   }
 
   /// The validated `project.pbxproj` template for a macOS command-line tool target named `MyApp` with a single
@@ -1640,6 +1649,435 @@ package final class XcodeTestProject {
 
 """
 
+  /// The validated `project.pbxproj` template for a standalone macOS framework target named `Framework`
+  /// (`com.apple.product-type.framework`) with a single `Framework.swift` source file. Object IDs use the
+  /// `B1` namespace (project object `B100000000000000000000B0`, product reference `B100000000000000000000A2`,
+  /// native target `B100000000000000000000E1`) so they do not collide with the `A1`/`A2`-prefixed IDs of the
+  /// referencing `MyApp.xcodeproj` in the `.appWithProjectReference` fixture. Used as the project-referenced
+  /// `Framework/Framework.xcodeproj`.
+  ///
+  /// Validated with xcodebuild -list / -dumpPIF / plutil -lint on Xcode 26.4.
+  ///
+  /// - Important: The leading indentation of the lines below uses tabs, matching what Xcode writes. The closing
+  ///   delimiter of the multi-line string literal is placed at column zero so that Swift does not strip the leading
+  ///   tabs from the embedded content.
+  // swift-format-ignore
+  package static let frameworkOnlyPbxprojTemplate: String = """
+// !$*UTF8*$!
+{
+\tarchiveVersion = 1;
+\tclasses = {
+\t};
+\tobjectVersion = 56;
+\tobjects = {
+
+/* Begin PBXBuildFile section */
+\t\tB100000000000000000000B1 /* Framework.swift in Sources */ = {isa = PBXBuildFile; fileRef = B100000000000000000000A1 /* Framework.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+\t\tB100000000000000000000A1 /* Framework.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Framework.swift; sourceTree = "<group>"; };
+\t\tB100000000000000000000A2 /* Framework.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Framework.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+\t\tB100000000000000000000C1 /* Frameworks */ = {
+\t\t\tisa = PBXFrameworksBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+\t\tB100000000000000000000D1 = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tB100000000000000000000A1 /* Framework.swift */,
+\t\t\t\tB100000000000000000000D2 /* Products */,
+\t\t\t);
+\t\t\tsourceTree = "<group>";
+\t\t};
+\t\tB100000000000000000000D2 /* Products */ = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tB100000000000000000000A2 /* Framework.framework */,
+\t\t\t);
+\t\t\tname = Products;
+\t\t\tsourceTree = "<group>";
+\t\t};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+\t\tB100000000000000000000E1 /* Framework */ = {
+\t\t\tisa = PBXNativeTarget;
+\t\t\tbuildConfigurationList = B100000000000000000000F1 /* Build configuration list for PBXNativeTarget "Framework" */;
+\t\t\tbuildPhases = (
+\t\t\t\tB100000000000000000000C2 /* Sources */,
+\t\t\t\tB100000000000000000000C1 /* Frameworks */,
+\t\t\t);
+\t\t\tbuildRules = (
+\t\t\t);
+\t\t\tdependencies = (
+\t\t\t);
+\t\t\tname = Framework;
+\t\t\tproductName = Framework;
+\t\t\tproductReference = B100000000000000000000A2 /* Framework.framework */;
+\t\t\tproductType = "com.apple.product-type.framework";
+\t\t};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+\t\tB100000000000000000000B0 /* Project object */ = {
+\t\t\tisa = PBXProject;
+\t\t\tattributes = {
+\t\t\t\tBuildIndependentTargetsInParallel = 1;
+\t\t\t\tLastSwiftUpdateCheck = 2640;
+\t\t\t\tLastUpgradeCheck = 2640;
+\t\t\t\tTargetAttributes = {
+\t\t\t\t\tB100000000000000000000E1 = {
+\t\t\t\t\t\tCreatedOnToolsVersion = 26.4;
+\t\t\t\t\t};
+\t\t\t\t};
+\t\t\t};
+\t\t\tbuildConfigurationList = B100000000000000000000F0 /* Build configuration list for PBXProject "Framework" */;
+\t\t\tcompatibilityVersion = "Xcode 14.0";
+\t\t\tdevelopmentRegion = en;
+\t\t\thasScannedForEncodings = 0;
+\t\t\tknownRegions = (
+\t\t\t\ten,
+\t\t\t\tBase,
+\t\t\t);
+\t\t\tmainGroup = B100000000000000000000D1;
+\t\t\tproductRefGroup = B100000000000000000000D2 /* Products */;
+\t\t\tprojectDirPath = "";
+\t\t\tprojectRoot = "";
+\t\t\ttargets = (
+\t\t\t\tB100000000000000000000E1 /* Framework */,
+\t\t\t);
+\t\t};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+\t\tB100000000000000000000C2 /* Sources */ = {
+\t\t\tisa = PBXSourcesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t\tB100000000000000000000B1 /* Framework.swift in Sources */,
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+\t\tB100000000000000000000F2 /* Debug */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;
+\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;
+\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;
+\t\t\t\tGCC_NO_COMMON_BLOCKS = YES;
+\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;
+\t\t\t\tONLY_ACTIVE_ARCH = YES;
+\t\t\t\tSDKROOT = macosx;
+\t\t\t\tSWIFT_OPTIMIZATION_LEVEL = "-Onone";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Debug;
+\t\t};
+\t\tB100000000000000000000F3 /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;
+\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;
+\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;
+\t\t\t\tGCC_NO_COMMON_BLOCKS = YES;
+\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;
+\t\t\t\tSDKROOT = macosx;
+\t\t\t\tSWIFT_COMPILATION_MODE = wholemodule;
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+\t\tB100000000000000000000F4 /* Debug */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Debug;
+\t\t};
+\t\tB100000000000000000000F5 /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+\t\tB100000000000000000000F0 /* Build configuration list for PBXProject "Framework" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\tB100000000000000000000F2 /* Debug */,
+\t\t\t\tB100000000000000000000F3 /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+\t\tB100000000000000000000F1 /* Build configuration list for PBXNativeTarget "Framework" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\tB100000000000000000000F4 /* Debug */,
+\t\t\t\tB100000000000000000000F5 /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+/* End XCConfigurationList section */
+\t};
+\trootObject = B100000000000000000000B0 /* Project object */;
+}
+
+"""
+
+  /// The validated `project.pbxproj` template for a macOS command-line tool target named `MyApp` (source
+  /// `main.swift`) that project-references a separate `Framework/Framework.xcodeproj` via a `projectReferences`
+  /// entry. The reference machinery uses the `A2` namespace (file reference `A2…R1`, reference proxy `A2…P1`,
+  /// container item proxy `A2…X1`, Products group `A2…G1`) to avoid colliding with the `A1`-prefixed IDs of the
+  /// `MyApp` target, and the container item proxy's `remoteGlobalIDString` is the framework's product reference
+  /// `B100000000000000000000A2` from ``frameworkOnlyPbxprojTemplate``. Because the referenced project is a
+  /// distinct `.xcodeproj`, SwiftBuild resolves the `Framework` target under `Framework/Framework.xcodeproj`,
+  /// not under `MyApp.xcodeproj`.
+  ///
+  /// Validated with xcodebuild -list / -dumpPIF / plutil -lint on Xcode 26.4.
+  ///
+  /// - Important: The leading indentation of the lines below uses tabs, matching what Xcode writes. The closing
+  ///   delimiter of the multi-line string literal is placed at column zero so that Swift does not strip the leading
+  ///   tabs from the embedded content.
+  // swift-format-ignore
+  package static let appWithProjectReferencePbxprojTemplate: String = """
+// !$*UTF8*$!
+{
+\tarchiveVersion = 1;
+\tclasses = {
+\t};
+\tobjectVersion = 56;
+\tobjects = {
+
+/* Begin PBXBuildFile section */
+\t\tA100000000000000000000B1 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000000000000000000A1 /* main.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+\t\tA200000000000000000000X1 /* PBXContainerItemProxy */ = {
+\t\t\tisa = PBXContainerItemProxy;
+\t\t\tcontainerPortal = A200000000000000000000R1 /* Framework.xcodeproj */;
+\t\t\tproxyType = 2;
+\t\t\tremoteGlobalIDString = B100000000000000000000A2;
+\t\t\tremoteInfo = Framework;
+\t\t};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+\t\tA100000000000000000000A1 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+\t\tA100000000000000000000A2 /* MyApp */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = MyApp; sourceTree = BUILT_PRODUCTS_DIR; };
+\t\tA200000000000000000000R1 /* Framework.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; name = Framework.xcodeproj; path = "Framework/Framework.xcodeproj"; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+\t\tA100000000000000000000C1 /* Frameworks */ = {
+\t\t\tisa = PBXFrameworksBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+\t\tA100000000000000000000D1 = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tA100000000000000000000A1 /* main.swift */,
+\t\t\t\tA200000000000000000000R1 /* Framework.xcodeproj */,
+\t\t\t\tA200000000000000000000G1 /* Products */,
+\t\t\t\tA100000000000000000000D2 /* Products */,
+\t\t\t);
+\t\t\tsourceTree = "<group>";
+\t\t};
+\t\tA100000000000000000000D2 /* Products */ = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tA100000000000000000000A2 /* MyApp */,
+\t\t\t);
+\t\t\tname = Products;
+\t\t\tsourceTree = "<group>";
+\t\t};
+\t\tA200000000000000000000G1 /* Products */ = {
+\t\t\tisa = PBXGroup;
+\t\t\tchildren = (
+\t\t\t\tA200000000000000000000P1 /* Framework.framework */,
+\t\t\t);
+\t\t\tname = Products;
+\t\t\tsourceTree = "<group>";
+\t\t};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+\t\tA100000000000000000000E1 /* MyApp */ = {
+\t\t\tisa = PBXNativeTarget;
+\t\t\tbuildConfigurationList = A100000000000000000000F1 /* Build configuration list for PBXNativeTarget "MyApp" */;
+\t\t\tbuildPhases = (
+\t\t\t\tA100000000000000000000C2 /* Sources */,
+\t\t\t\tA100000000000000000000C1 /* Frameworks */,
+\t\t\t);
+\t\t\tbuildRules = (
+\t\t\t);
+\t\t\tdependencies = (
+\t\t\t);
+\t\t\tname = MyApp;
+\t\t\tproductName = MyApp;
+\t\t\tproductReference = A100000000000000000000A2 /* MyApp */;
+\t\t\tproductType = "com.apple.product-type.tool";
+\t\t};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+\t\tA100000000000000000000B0 /* Project object */ = {
+\t\t\tisa = PBXProject;
+\t\t\tattributes = {
+\t\t\t\tBuildIndependentTargetsInParallel = 1;
+\t\t\t\tLastSwiftUpdateCheck = 2640;
+\t\t\t\tLastUpgradeCheck = 2640;
+\t\t\t\tTargetAttributes = {
+\t\t\t\t\tA100000000000000000000E1 = {
+\t\t\t\t\t\tCreatedOnToolsVersion = 26.4;
+\t\t\t\t\t};
+\t\t\t\t};
+\t\t\t};
+\t\t\tbuildConfigurationList = A100000000000000000000F0 /* Build configuration list for PBXProject "MyApp" */;
+\t\t\tcompatibilityVersion = "Xcode 14.0";
+\t\t\tdevelopmentRegion = en;
+\t\t\thasScannedForEncodings = 0;
+\t\t\tknownRegions = (
+\t\t\t\ten,
+\t\t\t\tBase,
+\t\t\t);
+\t\t\tmainGroup = A100000000000000000000D1;
+\t\t\tproductRefGroup = A100000000000000000000D2 /* Products */;
+\t\t\tprojectDirPath = "";
+\t\t\tprojectReferences = (
+\t\t\t\t{
+\t\t\t\t\tProductGroup = A200000000000000000000G1 /* Products */;
+\t\t\t\t\tProjectRef = A200000000000000000000R1 /* Framework.xcodeproj */;
+\t\t\t\t},
+\t\t\t);
+\t\t\tprojectRoot = "";
+\t\t\ttargets = (
+\t\t\t\tA100000000000000000000E1 /* MyApp */,
+\t\t\t);
+\t\t};
+/* End PBXProject section */
+
+/* Begin PBXReferenceProxy section */
+\t\tA200000000000000000000P1 /* Framework.framework */ = {
+\t\t\tisa = PBXReferenceProxy;
+\t\t\tfileType = wrapper.framework;
+\t\t\tpath = Framework.framework;
+\t\t\tremoteRef = A200000000000000000000X1 /* PBXContainerItemProxy */;
+\t\t\tsourceTree = BUILT_PRODUCTS_DIR;
+\t\t};
+/* End PBXReferenceProxy section */
+
+/* Begin PBXSourcesBuildPhase section */
+\t\tA100000000000000000000C2 /* Sources */ = {
+\t\t\tisa = PBXSourcesBuildPhase;
+\t\t\tbuildActionMask = 2147483647;
+\t\t\tfiles = (
+\t\t\t\tA100000000000000000000B1 /* main.swift in Sources */,
+\t\t\t);
+\t\t\trunOnlyForDeploymentPostprocessing = 0;
+\t\t};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+\t\tA100000000000000000000F2 /* Debug */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;
+\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;
+\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;
+\t\t\t\tGCC_NO_COMMON_BLOCKS = YES;
+\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;
+\t\t\t\tONLY_ACTIVE_ARCH = YES;
+\t\t\t\tSDKROOT = macosx;
+\t\t\t\tSWIFT_OPTIMIZATION_LEVEL = "-Onone";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Debug;
+\t\t};
+\t\tA100000000000000000000F3 /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tALWAYS_SEARCH_USER_PATHS = NO;
+\t\t\t\tCLANG_ENABLE_OBJC_ARC = YES;
+\t\t\t\tENABLE_STRICT_OBJC_MSGSEND = YES;
+\t\t\t\tGCC_NO_COMMON_BLOCKS = YES;
+\t\t\t\tMACOSX_DEPLOYMENT_TARGET = 13.0;
+\t\t\t\tSDKROOT = macosx;
+\t\t\t\tSWIFT_COMPILATION_MODE = wholemodule;
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+\t\tA100000000000000000000F4 /* Debug */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Debug;
+\t\t};
+\t\tA100000000000000000000F5 /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tPRODUCT_NAME = "$(TARGET_NAME)";
+\t\t\t\tSWIFT_VERSION = 5.0;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+\t\tA100000000000000000000F0 /* Build configuration list for PBXProject "MyApp" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\tA100000000000000000000F2 /* Debug */,
+\t\t\t\tA100000000000000000000F3 /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+\t\tA100000000000000000000F1 /* Build configuration list for PBXNativeTarget "MyApp" */ = {
+\t\t\tisa = XCConfigurationList;
+\t\t\tbuildConfigurations = (
+\t\t\t\tA100000000000000000000F4 /* Debug */,
+\t\t\t\tA100000000000000000000F5 /* Release */,
+\t\t\t);
+\t\t\tdefaultConfigurationIsVisible = 0;
+\t\t\tdefaultConfigurationName = Release;
+\t\t};
+/* End XCConfigurationList section */
+\t};
+\trootObject = A100000000000000000000B0 /* Project object */;
+}
+
+"""
+
   /// Creates a minimal Xcode project on disk in a fresh temporary directory.
   ///
   /// - Parameters:
@@ -1674,6 +2112,8 @@ package final class XcodeTestProject {
       self.xcodeprojURL = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
       self.workspaceURL = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
     default:
+      // Handles `.appWithProjectReference` and all other single-`.xcodeproj`-at-root kinds: MyApp.xcodeproj
+      // with no workspace.
       self.xcodeprojURL = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
       self.workspaceURL = nil
     }
@@ -1683,7 +2123,7 @@ package final class XcodeTestProject {
     // the primary source in `AppA/main.swift`; every other kind keeps `main.swift` at the project root.
     switch kind {
     case .macOSCommandLineTool, .iOSApp, .appWithUnitTestTarget, .appWithPackageDependency,
-      .workspaceWithNestedProject:
+      .workspaceWithNestedProject, .appWithProjectReference:
       self.sourceFileURL = root.appendingPathComponent("main.swift", isDirectory: false)
     case .appWithFrameworkDependency:
       self.sourceFileURL =
@@ -1697,8 +2137,11 @@ package final class XcodeTestProject {
         .appendingPathComponent("main.swift", isDirectory: false)
     }
 
-    // Single-project generation (skipped for workspace kinds which write two projects separately below).
-    if kind != .workspaceWithDuplicateTargetNames && kind != .workspaceWithNestedProject {
+    // Single-project generation (skipped for workspace kinds, and for `.appWithProjectReference`, which
+    // write multiple projects separately below).
+    if kind != .workspaceWithDuplicateTargetNames && kind != .workspaceWithNestedProject
+      && kind != .appWithProjectReference
+    {
       try fileManager.createDirectory(at: xcodeprojURL, withIntermediateDirectories: true)
       let template: String
       switch kind {
@@ -1707,10 +2150,12 @@ package final class XcodeTestProject {
       case .appWithFrameworkDependency: template = Self.appWithFrameworkPbxprojTemplate
       case .appWithUnitTestTarget: template = Self.appWithUnitTestPbxprojTemplate
       case .appWithPackageDependency: template = Self.appWithPackageDependencyPbxprojTemplate
-      case .workspaceWithDuplicateTargetNames, .workspaceWithNestedProject:
+      case .workspaceWithDuplicateTargetNames, .workspaceWithNestedProject, .appWithProjectReference:
         // Unreachable: excluded by the enclosing guard. This arm exists only to keep the switch
-        // exhaustive; workspace projects are generated in dedicated blocks below.
-        preconditionFailure("workspace kinds are generated separately, not via the single-project template")
+        // exhaustive; these kinds' projects are generated in dedicated blocks below.
+        preconditionFailure(
+          "workspace/project-reference kinds are generated separately, not via the single-project template"
+        )
       }
       try template.write(
         to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
@@ -1852,6 +2297,34 @@ package final class XcodeTestProject {
         """
       try (contents + "\n").write(
         to: workspace.appendingPathComponent("contents.xcworkspacedata", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
+    }
+
+    if case .appWithProjectReference = kind {
+      // Root project: MyApp.xcodeproj (target MyApp, A1-prefixed ids) that project-references
+      // Framework/Framework.xcodeproj, with main.swift at the project root.
+      try fileManager.createDirectory(at: xcodeprojURL, withIntermediateDirectories: true)
+      try Self.appWithProjectReferencePbxprojTemplate.write(
+        to: xcodeprojURL.appendingPathComponent("project.pbxproj", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
+      try sourceContents.write(to: sourceFileURL, atomically: true, encoding: .utf8)
+
+      // Referenced project: Framework/Framework.xcodeproj (target Framework, B1-prefixed ids => no id
+      // collision with the root project), with its own Framework.swift as a sibling of the .xcodeproj.
+      let frameworkProjDir = root.appendingPathComponent("Framework", isDirectory: true)
+      let frameworkXcodeproj = frameworkProjDir.appendingPathComponent("Framework.xcodeproj", isDirectory: true)
+      try fileManager.createDirectory(at: frameworkXcodeproj, withIntermediateDirectories: true)
+      try Self.frameworkOnlyPbxprojTemplate.write(
+        to: frameworkXcodeproj.appendingPathComponent("project.pbxproj", isDirectory: false),
+        atomically: true,
+        encoding: .utf8
+      )
+      try "public func frameworkEntry() {}\n".write(
+        to: frameworkProjDir.appendingPathComponent("Framework.swift", isDirectory: false),
         atomically: true,
         encoding: .utf8
       )
