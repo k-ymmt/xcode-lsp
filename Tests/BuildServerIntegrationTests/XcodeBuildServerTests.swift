@@ -931,6 +931,40 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// A scheme living in the opened `MyApp.xcodeproj` whose only Build seed references the project-referenced
+  /// `Framework` target via `container:Framework/Framework.xcodeproj` scopes to `Framework`. If the
+  /// cross-project container failed to resolve to Framework's PROJECT_FILE_PATH, `containerMatches` would be
+  /// false, no target would match, and the build server would fall back to indexing all targets (including
+  /// `MyApp`) — so asserting `MyApp` is excluded proves the cross-project reference resolved.
+  func testSchemeReferencingProjectReferencedTargetScopesAcrossProjects() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithProjectReference, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    try project.writeSharedScheme(
+      named: "CrossScheme",
+      inProject: project.xcodeprojURL,
+      buildTargets: [(blueprintName: "Framework", container: "Framework/Framework.xcodeproj")]
+    )
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "CrossScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = Set(response.targets.compactMap(\.displayName))
+    XCTAssertTrue(names.contains("Framework"), "expected Framework in scope, got \(names.sorted())")
+    XCTAssertFalse(
+      names.contains("MyApp"),
+      "a correctly-resolved cross-project seed scopes to Framework only; MyApp present would mean a fallback to all targets, got \(names.sorted())"
+    )
+  }
+
   /// Test 5: a unit-test target is tagged `.test` while a non-test target is not. This is what
   /// drives `mayContainTests`, and therefore SourceKit-LSP test discovery, for Xcode projects.
   func testTestTargetIsTaggedAsTest() async throws {
