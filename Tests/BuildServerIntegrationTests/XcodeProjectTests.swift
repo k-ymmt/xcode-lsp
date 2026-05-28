@@ -202,5 +202,40 @@ final class XcodeProjectTests: XCTestCase {
       []
     )
   }
+
+  // MARK: - referencedProjects
+
+  func testReferencedProjectsReadsFromDisk() throws {
+    let tmp = FileManager.default.temporaryDirectory
+      .appendingPathComponent("XcodeProjectTests-\(UUID().uuidString)", isDirectory: true)
+    let appXcodeproj = tmp.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+    try FileManager.default.createDirectory(at: appXcodeproj, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: tmp) }
+
+    let data = pbxprojData(
+      objects: [
+        "PROJ": [
+          "isa": "PBXProject", "mainGroup": "G_MAIN",
+          "projectReferences": [["ProductGroup": "G", "ProjectRef": "FREF"]],
+        ],
+        "G_MAIN": ["isa": "PBXGroup", "children": ["FREF"], "sourceTree": "<group>"],
+        "FREF": ["isa": "PBXFileReference", "path": "Framework/Framework.xcodeproj", "sourceTree": "<group>"],
+      ],
+      rootObject: "PROJ"
+    )
+    try data.write(to: appXcodeproj.appendingPathComponent("project.pbxproj", isDirectory: false))
+
+    let resolved = XcodeProject.referencedProjects(ofProjectAt: appXcodeproj)
+    XCTAssertEqual(
+      resolved.map { $0.standardizedFileURL.path },
+      [tmp.appendingPathComponent("Framework/Framework.xcodeproj").standardizedFileURL.path]
+    )
+  }
+
+  func testReferencedProjectsReturnsEmptyWhenPbxprojAbsent() {
+    let missing = FileManager.default.temporaryDirectory
+      .appendingPathComponent("does-not-exist-\(UUID().uuidString).xcodeproj", isDirectory: true)
+    XCTAssertEqual(XcodeProject.referencedProjects(ofProjectAt: missing), [])
+  }
   #endif
 }
