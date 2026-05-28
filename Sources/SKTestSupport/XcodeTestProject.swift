@@ -54,6 +54,11 @@ package final class XcodeTestProject {
   /// Used as the base directory for ``writeWorkspaceSharedScheme(named:buildTargets:)``.
   package let workspaceURL: URL?
 
+  /// The project-referenced `Framework/Framework.xcodeproj` for `.appWithProjectReference`; `nil` for all
+  /// other kinds. Use as the `inProject:` destination of ``writeSharedScheme(named:inProject:buildTargets:)``
+  /// when authoring a scheme that lives in the project-referenced project.
+  package let referencedProjectURL: URL?
+
   private let fileManager: FileManager
 
   /// The kind of project to generate.
@@ -2118,6 +2123,12 @@ package final class XcodeTestProject {
       self.workspaceURL = nil
     }
 
+    if case .appWithProjectReference = kind {
+      self.referencedProjectURL = root.appendingPathComponent("Framework/Framework.xcodeproj", isDirectory: true)
+    } else {
+      self.referencedProjectURL = nil
+    }
+
     // The `.appWithFrameworkDependency` project references its sources under per-target subdirectories
     // (`App/main.swift` and `Framework/Framework.swift`); `.workspaceWithDuplicateTargetNames` puts
     // the primary source in `AppA/main.swift`; every other kind keeps `main.swift` at the project root.
@@ -2412,23 +2423,18 @@ package final class XcodeTestProject {
     return url
   }
 
-  /// Write a workspace-level shared `.xcscheme` named `name` into `<workspaceURL>/xcshareddata/xcschemes`,
-  /// whose Build action references each `(blueprintName, container)` pair. `container` is the `container:`
-  /// relative path (e.g. `AppA/AppA.xcodeproj`). Requires `workspaceURL` to be set.
+  /// Write a shared `.xcscheme` named `name` containing only a Build action that references each
+  /// `(blueprintName, container)` pair, into `schemesDir`. Shared private implementation of the
+  /// workspace and project `writeSharedScheme` variants (the `(blueprintName, container)` variants).
+  /// `writeSharedScheme(named:buildTargetNames:testTargetNames:launchTargetName:)` is intentionally
+  /// NOT routed through this helper because it also emits TestAction/LaunchAction sections that this
+  /// helper does not model; if you change the BuildAction XML format here, update that method too.
   @discardableResult
-  package func writeWorkspaceSharedScheme(
+  private func writeBuildActionScheme(
     named name: String,
+    intoSchemesDir schemesDir: URL,
     buildTargets: [(blueprintName: String, container: String)]
   ) throws -> URL {
-    struct NotAWorkspaceError: Error, CustomStringConvertible {
-      var description: String {
-        "writeWorkspaceSharedScheme requires workspaceURL to be non-nil (only set for workspace kinds)"
-      }
-    }
-    guard let workspaceURL else {
-      throw NotAWorkspaceError()
-    }
-    let schemesDir = workspaceURL.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true)
     try fileManager.createDirectory(at: schemesDir, withIntermediateDirectories: true)
     let entryLines: [String] = buildTargets.flatMap { target -> [String] in
       [
@@ -2451,5 +2457,48 @@ package final class XcodeTestProject {
     let url = schemesDir.appendingPathComponent("\(name).xcscheme", isDirectory: false)
     try (lines.joined(separator: "\n") + "\n").write(to: url, atomically: true, encoding: .utf8)
     return url
+  }
+
+  /// Write a workspace-level shared `.xcscheme` named `name` into `<workspaceURL>/xcshareddata/xcschemes`,
+  /// whose Build action references each `(blueprintName, container)` pair. `container` is the `container:`
+  /// relative path (e.g. `AppA/AppA.xcodeproj`). Requires `workspaceURL` to be set.
+  @discardableResult
+  package func writeWorkspaceSharedScheme(
+    named name: String,
+    buildTargets: [(blueprintName: String, container: String)]
+  ) throws -> URL {
+    struct NotAWorkspaceError: Error, CustomStringConvertible {
+      var description: String {
+        "writeWorkspaceSharedScheme requires workspaceURL to be non-nil (only set for workspace kinds)"
+      }
+    }
+    guard let workspaceURL else {
+      throw NotAWorkspaceError()
+    }
+    return try writeBuildActionScheme(
+      named: name,
+      intoSchemesDir: workspaceURL.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      buildTargets: buildTargets
+    )
+  }
+
+  /// Write a shared `.xcscheme` named `name` into `<projectURL>/xcshareddata/xcschemes`, whose Build action
+  /// references each `(blueprintName, container)` pair. `container` is the `container:` relative path:
+  /// `Framework.xcodeproj` when the scheme lives in that project, or `Framework/Framework.xcodeproj` to point
+  /// into a project-referenced project from a scheme that lives in the opened project. Use with
+  /// ``xcodeprojURL`` or ``referencedProjectURL`` to author cross-project schemes in the
+  /// `.appWithProjectReference` fixture. Build-action only; for schemes that also need a Test or Launch
+  /// action, use ``writeSharedScheme(named:buildTargetNames:testTargetNames:launchTargetName:)``.
+  @discardableResult
+  package func writeSharedScheme(
+    named name: String,
+    inProject projectURL: URL,
+    buildTargets: [(blueprintName: String, container: String)]
+  ) throws -> URL {
+    try writeBuildActionScheme(
+      named: name,
+      intoSchemesDir: projectURL.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      buildTargets: buildTargets
+    )
   }
 }

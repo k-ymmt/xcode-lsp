@@ -47,16 +47,16 @@ package enum XcodeScheme {
     }
   }
 
-  /// Locate the `.xcscheme` named `scheme` and return its `BuildAction` targets, with each
-  /// `ReferencedContainer` resolved to an absolute `.xcodeproj` path (relative to the directory of the
-  /// container the scheme file was found in). Returns `nil` if no matching file exists (the caller
-  /// then decides how to fall back).
+  /// Locate the `.xcscheme` named `scheme` in `searchContainers` (the caller-supplied, ordered list of
+  /// candidate containers: the opened container plus the project-reference-expanded root `.xcodeproj`s) and
+  /// return its Build/Test/Launch action targets, with each `ReferencedContainer` resolved to an absolute
+  /// `.xcodeproj` path (relative to the directory of the container the scheme file was found in). Returns
+  /// `nil` if no matching file exists (the caller then decides how to fall back).
   ///
-  /// Search order: shared schemes (`xcshareddata/xcschemes`) before user schemes
-  /// (`xcuserdata/*.xcuserdatad/xcschemes`). For a `.xcworkspace` container, member `.xcodeproj`s
-  /// under `projectRoot` are searched too.
-  package static func buildTargets(scheme: String, containerPath: URL, projectRoot: URL) -> [SchemeBuildTarget]? {
-    guard let (url, container) = schemeFileURL(scheme: scheme, containerPath: containerPath, projectRoot: projectRoot),
+  /// Search order: shared schemes (`xcshareddata/xcschemes`) across all containers before user schemes
+  /// (`xcuserdata/*.xcuserdatad/xcschemes`), preserving the order of `searchContainers` within each phase.
+  package static func buildTargets(scheme: String, searchContainers: [URL]) -> [SchemeBuildTarget]? {
+    guard let (url, container) = schemeFileURL(scheme: scheme, searchContainers: searchContainers),
       let data = try? Data(contentsOf: url)
     else {
       return nil
@@ -70,38 +70,21 @@ package enum XcodeScheme {
     }
   }
 
-  /// Containers to search for scheme files: the container itself, plus (for a workspace) the member
-  /// `.xcodeproj`s declared in its `contents.xcworkspacedata` (falling back to a top-level scan of
-  /// `projectRoot` if that file is absent or unreadable).
-  private static func searchContainers(containerPath: URL, projectRoot: URL) -> [URL] {
-    var containers = [containerPath]
-    if containerPath.pathExtension == "xcworkspace" {
-      let members =
-        XcodeWorkspace.memberProjects(workspaceURL: containerPath)
-        ?? ((try? FileManager.default.contentsOfDirectory(at: projectRoot, includingPropertiesForKeys: nil))?
-          .filter { $0.pathExtension == "xcodeproj" } ?? [])
-      containers.append(contentsOf: members.sorted { $0.path < $1.path })
-    }
-    return containers
-  }
-
   private static func schemeFileURL(
     scheme: String,
-    containerPath: URL,
-    projectRoot: URL
+    searchContainers: [URL]
   ) -> (url: URL, container: URL)? {
     let fm = FileManager.default
-    let containers = searchContainers(containerPath: containerPath, projectRoot: projectRoot)
 
     // Shared schemes first, across all candidate containers.
-    for container in containers {
+    for container in searchContainers {
       let shared = container.appendingPathComponent("xcshareddata/xcschemes/\(scheme).xcscheme", isDirectory: false)
       if fm.fileExists(atPath: shared.path) {
         return (shared, container)
       }
     }
     // Then user schemes: xcuserdata/<anything>.xcuserdatad/xcschemes/<name>.xcscheme
-    for container in containers {
+    for container in searchContainers {
       let userdata = container.appendingPathComponent("xcuserdata", isDirectory: true)
       guard let userDirs = try? fm.contentsOfDirectory(at: userdata, includingPropertiesForKeys: nil) else {
         continue

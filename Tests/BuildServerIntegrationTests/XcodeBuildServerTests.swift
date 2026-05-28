@@ -321,6 +321,24 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertEqual(Set(expanded.map(\.path)), ["/proj/A.xcodeproj", "/proj/B.xcodeproj"])
   }
 
+  // MARK: - orderedSchemeSearchContainers
+
+  func testOrderedSchemeSearchContainersPutsOpenedFirstThenSortedDeduped() {
+    let opened = URL(fileURLWithPath: "/proj/MyApp.xcodeproj")
+    let framework = URL(fileURLWithPath: "/proj/Framework/Framework.xcodeproj")
+    let lib = URL(fileURLWithPath: "/proj/Aaa/Lib.xcodeproj")
+    let result = XcodeBuildServer.orderedSchemeSearchContainers(
+      containerPath: opened,
+      // `opened` is also present in the root set and must be de-duplicated (not appended again).
+      rootProjects: [opened, framework, lib]
+    )
+    XCTAssertEqual(
+      result.map(\.path),
+      ["/proj/MyApp.xcodeproj", "/proj/Aaa/Lib.xcodeproj", "/proj/Framework/Framework.xcodeproj"],
+      "opened container first, then the rest sorted by path with the opened container de-duplicated"
+    )
+  }
+
   // MARK: - dependencyIdentifiers
 
   func testDependencyIdentifiersFiltersOutOfScopeGUIDs() throws {
@@ -855,6 +873,95 @@ final class XcodeBuildServerTests: XCTestCase {
     XCTAssertFalse(
       frameworkTarget.tags.contains(.dependency),
       "expected project-referenced Framework to NOT be tagged .dependency, got \(frameworkTarget.tags)"
+    )
+  }
+
+  /// The `.appWithProjectReference` fixture exposes its project-referenced Framework.xcodeproj, and a scheme
+  /// can be authored into it; the scheme parser then finds it among the search containers and resolves its
+  /// container relative to that project's directory.
+  func testWriteSharedSchemeInReferencedProject() throws {
+    let project = try XcodeTestProject(kind: .appWithProjectReference, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    let frameworkURL = try XCTUnwrap(project.referencedProjectURL)
+    try project.writeSharedScheme(
+      named: "FwScheme",
+      inProject: frameworkURL,
+      buildTargets: [(blueprintName: "Framework", container: "Framework.xcodeproj")]
+    )
+    let result = try XCTUnwrap(
+      XcodeScheme.buildTargets(scheme: "FwScheme", searchContainers: [project.xcodeprojURL, frameworkURL])
+    )
+    XCTAssertEqual(result.map(\.blueprintName), ["Framework"])
+    XCTAssertEqual(
+      result.first?.container?.standardizedFileURL.path,
+      frameworkURL.standardizedFileURL.path
+    )
+  }
+
+  /// A scheme that lives inside the project-referenced `Framework/Framework.xcodeproj` is discoverable when
+  /// `MyApp.xcodeproj` is opened, because `schemeSearchContainers()` includes project-referenced projects.
+  /// Scoping to it narrows the build server to `Framework` (and its closure), excluding `MyApp`.
+  func testSchemeInProjectReferencedProjectScopesToItsTarget() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithProjectReference, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    let frameworkURL = try XCTUnwrap(project.referencedProjectURL)
+    try project.writeSharedScheme(
+      named: "FrameworkScheme",
+      inProject: frameworkURL,
+      buildTargets: [(blueprintName: "Framework", container: "Framework.xcodeproj")]
+    )
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "FrameworkScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = Set(response.targets.compactMap(\.displayName))
+    XCTAssertTrue(names.contains("Framework"), "expected Framework in scope, got \(names.sorted())")
+    XCTAssertFalse(
+      names.contains("MyApp"),
+      "a scheme scoped to Framework should exclude MyApp (proves the scheme was found & scoped), got \(names.sorted())"
+    )
+  }
+
+  /// A scheme living in the opened `MyApp.xcodeproj` whose only Build seed references the project-referenced
+  /// `Framework` target via `container:Framework/Framework.xcodeproj` scopes to `Framework`. If the
+  /// cross-project container failed to resolve to Framework's PROJECT_FILE_PATH, `containerMatches` would be
+  /// false, no target would match, and the build server would fall back to indexing all targets (including
+  /// `MyApp`) — so asserting `MyApp` is excluded proves the cross-project reference resolved.
+  func testSchemeReferencingProjectReferencedTargetScopesAcrossProjects() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithProjectReference, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    try project.writeSharedScheme(
+      named: "CrossScheme",
+      inProject: project.xcodeprojURL,
+      buildTargets: [(blueprintName: "Framework", container: "Framework/Framework.xcodeproj")]
+    )
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "CrossScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = Set(response.targets.compactMap(\.displayName))
+    XCTAssertTrue(names.contains("Framework"), "expected Framework in scope, got \(names.sorted())")
+    XCTAssertFalse(
+      names.contains("MyApp"),
+      "a correctly-resolved cross-project seed scopes to Framework only; MyApp present would mean a fallback to all targets, got \(names.sorted())"
     )
   }
 

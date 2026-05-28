@@ -143,7 +143,7 @@ final class XcodeSchemeTests: XCTestCase {
       into: container.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
       blueprintName: "MyApp"
     )
-    let result = try XCTUnwrap(XcodeScheme.buildTargets(scheme: "MyApp", containerPath: container, projectRoot: root))
+    let result = try XCTUnwrap(XcodeScheme.buildTargets(scheme: "MyApp", searchContainers: [container]))
     XCTAssertEqual(result.map(\.blueprintName), ["MyApp"])
     XCTAssertEqual(
       result.first?.container?.standardizedFileURL.path,
@@ -165,7 +165,7 @@ final class XcodeSchemeTests: XCTestCase {
       blueprintName: "UserTarget"
     )
     XCTAssertEqual(
-      XcodeScheme.buildTargets(scheme: "MyApp", containerPath: container, projectRoot: root)?.map(\.blueprintName),
+      XcodeScheme.buildTargets(scheme: "MyApp", searchContainers: [container])?.map(\.blueprintName),
       ["SharedTarget"]
     )
   }
@@ -179,7 +179,7 @@ final class XcodeSchemeTests: XCTestCase {
       blueprintName: "UserTarget"
     )
     XCTAssertEqual(
-      XcodeScheme.buildTargets(scheme: "MyApp", containerPath: container, projectRoot: root)?.map(\.blueprintName),
+      XcodeScheme.buildTargets(scheme: "MyApp", searchContainers: [container])?.map(\.blueprintName),
       ["UserTarget"]
     )
   }
@@ -188,7 +188,7 @@ final class XcodeSchemeTests: XCTestCase {
     let root = try makeTempDir()
     let container = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
     try FileManager.default.createDirectory(at: container, withIntermediateDirectories: true)
-    XCTAssertNil(XcodeScheme.buildTargets(scheme: "Nope", containerPath: container, projectRoot: root))
+    XCTAssertNil(XcodeScheme.buildTargets(scheme: "Nope", searchContainers: [container]))
   }
 
   func testBuildTargetsResolvesContainerRelativeToMatchedContainerDir() throws {
@@ -201,7 +201,7 @@ final class XcodeSchemeTests: XCTestCase {
       blueprintName: "App",
       container: "AppA/AppA.xcodeproj"
     )
-    let result = try XCTUnwrap(XcodeScheme.buildTargets(scheme: "App", containerPath: workspace, projectRoot: root))
+    let result = try XCTUnwrap(XcodeScheme.buildTargets(scheme: "App", searchContainers: [workspace]))
     XCTAssertEqual(result.first?.blueprintName, "App")
     XCTAssertEqual(
       result.first?.container?.standardizedFileURL.path,
@@ -209,11 +209,12 @@ final class XcodeSchemeTests: XCTestCase {
     )
   }
 
-  func testBuildTargetsFindsSchemeInWorkspaceMemberProject() throws {
-    // Scheme lives in a member .xcodeproj under the workspace, not in the workspace itself.
+  func testBuildTargetsSearchesAllGivenContainers() throws {
+    // buildTargets searches every container it is handed (the caller now decides the set), finding a scheme
+    // that lives only in a non-first container and resolving its container relative to where it was found.
     let root = try makeTempDir()
-    let workspace = root.appendingPathComponent("MyApp.xcworkspace", isDirectory: true)
-    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
+    let opened = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
+    try FileManager.default.createDirectory(at: opened, withIntermediateDirectories: true)
     let member = root.appendingPathComponent("Member.xcodeproj", isDirectory: true)
     try writeSchemeWithContainer(
       "MyApp",
@@ -222,7 +223,7 @@ final class XcodeSchemeTests: XCTestCase {
       container: "Member.xcodeproj"
     )
     let result = try XCTUnwrap(
-      XcodeScheme.buildTargets(scheme: "MyApp", containerPath: workspace, projectRoot: root)
+      XcodeScheme.buildTargets(scheme: "MyApp", searchContainers: [opened, member])
     )
     XCTAssertEqual(result.first?.blueprintName, "MemberTarget")
     XCTAssertEqual(
@@ -231,41 +232,22 @@ final class XcodeSchemeTests: XCTestCase {
     )
   }
 
-  func testBuildTargetsFindsSchemeInSubdirectoryMemberViaNestedGroup() throws {
-    // The workspace references a member .xcodeproj nested in a subdirectory via <Group>. The scheme lives in
-    // that subdir project; discovery must follow contents.xcworkspacedata, not a top-level glob.
+  func testBuildTargetsResolvesCrossProjectContainerFromProjectScheme() throws {
+    // A scheme that lives in the opened MyApp.xcodeproj references a target in a project-referenced
+    // Framework/Framework.xcodeproj. The container resolves relative to the scheme-owning project's dir.
     let root = try makeTempDir()
-    let workspace = root.appendingPathComponent("MyWorkspace.xcworkspace", isDirectory: true)
-    try FileManager.default.createDirectory(at: workspace, withIntermediateDirectories: true)
-    let workspacedata = """
-      <?xml version="1.0" encoding="UTF-8"?>
-      <Workspace version = "1.0">
-         <Group location = "group:Modules">
-            <FileRef location = "group:MyLib/MyLib.xcodeproj"></FileRef>
-         </Group>
-      </Workspace>
-      """
-    try (workspacedata + "\n").write(
-      to: workspace.appendingPathComponent("contents.xcworkspacedata", isDirectory: false),
-      atomically: true,
-      encoding: .utf8
-    )
-    let member = root.appendingPathComponent("Modules/MyLib/MyLib.xcodeproj", isDirectory: true)
+    let opened = root.appendingPathComponent("MyApp.xcodeproj", isDirectory: true)
     try writeSchemeWithContainer(
-      "MyLib",
-      into: member.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
-      blueprintName: "MyLib",
-      container: "MyLib.xcodeproj"
+      "Cross",
+      into: opened.appendingPathComponent("xcshareddata/xcschemes", isDirectory: true),
+      blueprintName: "Framework",
+      container: "Framework/Framework.xcodeproj"
     )
-    let result = try XCTUnwrap(
-      XcodeScheme.buildTargets(scheme: "MyLib", containerPath: workspace, projectRoot: root)
-    )
-    XCTAssertEqual(result.first?.blueprintName, "MyLib")
-    // The scheme's `container:MyLib.xcodeproj` resolves relative to the subdirectory member project's
-    // own directory (where the scheme file was found), proving subdir-based container resolution works.
+    let result = try XCTUnwrap(XcodeScheme.buildTargets(scheme: "Cross", searchContainers: [opened]))
+    XCTAssertEqual(result.first?.blueprintName, "Framework")
     XCTAssertEqual(
       result.first?.container?.standardizedFileURL.path,
-      root.appendingPathComponent("Modules/MyLib/MyLib.xcodeproj").standardizedFileURL.path
+      root.appendingPathComponent("Framework/Framework.xcodeproj").standardizedFileURL.path
     )
   }
 

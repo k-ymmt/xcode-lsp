@@ -94,8 +94,7 @@ package actor XcodeBuildServer: BuiltInBuildServer {
     }
     let schemeTargets = XcodeScheme.buildTargets(
       scheme: scheme,
-      containerPath: containerPath,
-      projectRoot: projectRoot
+      searchContainers: schemeSearchContainers()
     )
     switch Self.resolveScheme(named: scheme, schemeTargets: schemeTargets, allTargets: all) {
     case .seeds(let seedGUIDs):
@@ -161,6 +160,15 @@ package actor XcodeBuildServer: BuiltInBuildServer {
         FileManager.default.fileExists(atPath: $0.path)
       }
     }
+  }
+
+  /// Containers to search for `.xcscheme` files: the opened container first, then every root `.xcodeproj`
+  /// (workspace members plus transitively project-referenced projects) from `rootProjectPaths()`. Schemes
+  /// can live in the opened workspace/project or in any project it reaches through project references, so
+  /// all of them are scheme-file candidates; the opened container is searched first so it wins on
+  /// scheme-name collisions.
+  private func schemeSearchContainers() -> [URL] {
+    Self.orderedSchemeSearchContainers(containerPath: containerPath, rootProjects: rootProjectPaths())
   }
 
   // MARK: BuiltInBuildServer
@@ -351,6 +359,20 @@ extension XcodeBuildServer {
   /// `isPartOfRootProject` and `resolveScheme`'s container matching.
   package static func normalizedPath(_ url: URL) -> String {
     url.resolvingSymlinksInPath().path
+  }
+
+  /// The ordered, de-duplicated list of containers to search for `.xcscheme` files: the opened
+  /// `containerPath` first (so it wins on scheme-name collisions), followed by every root `.xcodeproj`
+  /// in `rootProjects` sorted by path. `rootProjects` is the project-reference-expanded root set from
+  /// `rootProjectPaths()`; the opened container is removed from the tail via `normalizedPath` so it is
+  /// not searched twice. `package` so the ordering is unit-testable without disk I/O.
+  package static func orderedSchemeSearchContainers(containerPath: URL, rootProjects: Set<URL>) -> [URL] {
+    var result: [URL] = [containerPath]
+    var seen: Set<String> = [normalizedPath(containerPath)]
+    for url in rootProjects.sorted(by: { $0.path < $1.path }) where seen.insert(normalizedPath(url)).inserted {
+      result.append(url)
+    }
+    return result
   }
 
   /// Expand a seed set of `.xcodeproj` paths by transitively following project references, so that the
