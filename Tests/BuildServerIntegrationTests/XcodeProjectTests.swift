@@ -30,6 +30,8 @@ final class XcodeProjectTests: XCTestCase {
     return try! PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
   }
 
+  // MARK: - projectReferences
+
   func testResolvesGroupRelativeReferenceInMainGroup() {
     let data = pbxprojData(
       objects: [
@@ -76,6 +78,129 @@ final class XcodeProjectTests: XCTestCase {
       projectDir: URL(fileURLWithPath: "/root", isDirectory: true)
     )
     XCTAssertEqual(resolved.map(\.path), ["/root/Framework/Framework.xcodeproj"])
+  }
+
+  func testResolvesAbsoluteReference() {
+    let data = pbxprojData(
+      objects: [
+        "PROJ": [
+          "isa": "PBXProject", "mainGroup": "G_MAIN",
+          "projectReferences": [["ProductGroup": "G_PROD", "ProjectRef": "FREF"]],
+        ],
+        "G_MAIN": ["isa": "PBXGroup", "children": ["FREF"], "sourceTree": "<group>"],
+        "FREF": ["isa": "PBXFileReference", "path": "/elsewhere/Lib.xcodeproj", "sourceTree": "<absolute>"],
+      ],
+      rootObject: "PROJ"
+    )
+    let resolved = XcodeProject.projectReferences(
+      pbxprojContents: data,
+      projectDir: URL(fileURLWithPath: "/root", isDirectory: true)
+    )
+    XCTAssertEqual(resolved.map(\.path), ["/elsewhere/Lib.xcodeproj"])
+  }
+
+  func testAccumulatesNestedGroupPaths() {
+    // FREF lives in G_SUB ("Sub"), itself a child of the main group → /root/Sub/Lib.xcodeproj.
+    let data = pbxprojData(
+      objects: [
+        "PROJ": [
+          "isa": "PBXProject", "mainGroup": "G_MAIN",
+          "projectReferences": [["ProductGroup": "G_PROD", "ProjectRef": "FREF"]],
+        ],
+        "G_MAIN": ["isa": "PBXGroup", "children": ["G_SUB"], "sourceTree": "<group>"],
+        "G_SUB": ["isa": "PBXGroup", "children": ["FREF"], "path": "Sub", "sourceTree": "<group>"],
+        "FREF": ["isa": "PBXFileReference", "path": "Lib.xcodeproj", "sourceTree": "<group>"],
+      ],
+      rootObject: "PROJ"
+    )
+    let resolved = XcodeProject.projectReferences(
+      pbxprojContents: data,
+      projectDir: URL(fileURLWithPath: "/root", isDirectory: true)
+    )
+    XCTAssertEqual(resolved.map(\.path), ["/root/Sub/Lib.xcodeproj"])
+  }
+
+  func testReturnsMultipleReferencesDeduplicated() {
+    let data = pbxprojData(
+      objects: [
+        "PROJ": [
+          "isa": "PBXProject", "mainGroup": "G_MAIN",
+          "projectReferences": [
+            ["ProductGroup": "G1", "ProjectRef": "FREF_A"],
+            ["ProductGroup": "G2", "ProjectRef": "FREF_B"],
+            ["ProductGroup": "G3", "ProjectRef": "FREF_A_DUP"],
+          ],
+        ],
+        "G_MAIN": ["isa": "PBXGroup", "children": ["FREF_A", "FREF_B", "FREF_A_DUP"], "sourceTree": "<group>"],
+        "FREF_A": ["isa": "PBXFileReference", "path": "A/A.xcodeproj", "sourceTree": "<group>"],
+        "FREF_B": ["isa": "PBXFileReference", "path": "B/B.xcodeproj", "sourceTree": "<group>"],
+        "FREF_A_DUP": ["isa": "PBXFileReference", "path": "A/A.xcodeproj", "sourceTree": "<group>"],
+      ],
+      rootObject: "PROJ"
+    )
+    let resolved = XcodeProject.projectReferences(
+      pbxprojContents: data,
+      projectDir: URL(fileURLWithPath: "/root", isDirectory: true)
+    )
+    XCTAssertEqual(resolved.map(\.path), ["/root/A/A.xcodeproj", "/root/B/B.xcodeproj"])
+  }
+
+  func testSkipsNonXcodeprojReferences() {
+    let data = pbxprojData(
+      objects: [
+        "PROJ": [
+          "isa": "PBXProject", "mainGroup": "G_MAIN",
+          "projectReferences": [["ProductGroup": "G", "ProjectRef": "FREF"]],
+        ],
+        "G_MAIN": ["isa": "PBXGroup", "children": ["FREF"], "sourceTree": "<group>"],
+        "FREF": ["isa": "PBXFileReference", "path": "notes.txt", "sourceTree": "<group>"],
+      ],
+      rootObject: "PROJ"
+    )
+    XCTAssertEqual(
+      XcodeProject.projectReferences(pbxprojContents: data, projectDir: URL(fileURLWithPath: "/root")),
+      []
+    )
+  }
+
+  func testSkipsNonDiskSourceTrees() {
+    let data = pbxprojData(
+      objects: [
+        "PROJ": [
+          "isa": "PBXProject", "mainGroup": "G_MAIN",
+          "projectReferences": [["ProductGroup": "G", "ProjectRef": "FREF"]],
+        ],
+        "G_MAIN": ["isa": "PBXGroup", "children": ["FREF"], "sourceTree": "<group>"],
+        "FREF": ["isa": "PBXFileReference", "path": "Built.xcodeproj", "sourceTree": "BUILT_PRODUCTS_DIR"],
+      ],
+      rootObject: "PROJ"
+    )
+    XCTAssertEqual(
+      XcodeProject.projectReferences(pbxprojContents: data, projectDir: URL(fileURLWithPath: "/root")),
+      []
+    )
+  }
+
+  func testReturnsEmptyWhenNoProjectReferences() {
+    let data = pbxprojData(
+      objects: [
+        "PROJ": ["isa": "PBXProject", "mainGroup": "G_MAIN"],
+        "G_MAIN": ["isa": "PBXGroup", "children": [], "sourceTree": "<group>"],
+      ],
+      rootObject: "PROJ"
+    )
+    XCTAssertEqual(
+      XcodeProject.projectReferences(pbxprojContents: data, projectDir: URL(fileURLWithPath: "/root")),
+      []
+    )
+  }
+
+  func testReturnsEmptyForMalformedData() {
+    let data = Data("this is not a plist".utf8)
+    XCTAssertEqual(
+      XcodeProject.projectReferences(pbxprojContents: data, projectDir: URL(fileURLWithPath: "/root")),
+      []
+    )
   }
   #endif
 }

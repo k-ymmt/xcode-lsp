@@ -102,6 +102,9 @@ package enum XcodeProject {
   /// The resolved base directory for a `<group>`-relative object: the resolved path of the PBXGroup that
   /// lists it as a child, or `projectDir` if no group does (e.g. it sits in the main group, which itself
   /// resolves to `projectDir`).
+  ///
+  /// - Note: Scans `objects` linearly to locate the parent group; this is acceptable because
+  ///   project-reference counts and group nesting depth are small in practice.
   private static func parentGroupBase(
     ofObjectID objectID: String,
     objects: [String: Any],
