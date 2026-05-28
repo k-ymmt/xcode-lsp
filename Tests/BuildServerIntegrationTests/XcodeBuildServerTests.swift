@@ -898,6 +898,39 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// A scheme that lives inside the project-referenced `Framework/Framework.xcodeproj` is discoverable when
+  /// `MyApp.xcodeproj` is opened, because `schemeSearchContainers()` includes project-referenced projects.
+  /// Scoping to it narrows the build server to `Framework` (and its closure), excluding `MyApp`.
+  func testSchemeInProjectReferencedProjectScopesToItsTarget() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithProjectReference, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+    let frameworkURL = try XCTUnwrap(project.referencedProjectURL)
+    try project.writeSharedScheme(
+      named: "FrameworkScheme",
+      inProject: frameworkURL,
+      buildTargets: [(blueprintName: "Framework", container: "Framework.xcodeproj")]
+    )
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(xcode: SourceKitLSPOptions.XcodeOptions(scheme: "FrameworkScheme")),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = Set(response.targets.compactMap(\.displayName))
+    XCTAssertTrue(names.contains("Framework"), "expected Framework in scope, got \(names.sorted())")
+    XCTAssertFalse(
+      names.contains("MyApp"),
+      "a scheme scoped to Framework should exclude MyApp (proves the scheme was found & scoped), got \(names.sorted())"
+    )
+  }
+
   /// Test 5: a unit-test target is tagged `.test` while a non-test target is not. This is what
   /// drives `mayContainTests`, and therefore SourceKit-LSP test discovery, for Xcode projects.
   func testTestTargetIsTaggedAsTest() async throws {
