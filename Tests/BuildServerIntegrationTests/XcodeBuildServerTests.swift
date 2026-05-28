@@ -819,6 +819,45 @@ final class XcodeBuildServerTests: XCTestCase {
     )
   }
 
+  /// The opened `MyApp.xcodeproj` project-references `Framework/Framework.xcodeproj`. SwiftBuild surfaces
+  /// the `Framework` target, and because `rootProjectPaths()` follows the project reference, that target
+  /// is treated as root and NOT tagged `.dependency`. Before following project references, `Framework`'s
+  /// PROJECT_FILE_PATH fell outside the root set and was mis-tagged — this is the regression test for it.
+  func testProjectReferencedTargetIsNotTaggedDependency() async throws {
+    try skipUnlessXcodeAvailable()
+
+    let project = try XcodeTestProject(kind: .appWithProjectReference, sourceContents: "print(\"hi\")\n")
+    defer { project.keepAlive() }
+
+    // The fixture's pbxproj is real OpenStep; confirm the parser resolves the reference off disk (macOS).
+    let referenced = XcodeProject.referencedProjects(ofProjectAt: project.xcodeprojURL)
+    XCTAssertEqual(
+      referenced.map { $0.standardizedFileURL.lastPathComponent },
+      ["Framework.xcodeproj"],
+      "expected MyApp.xcodeproj to project-reference Framework.xcodeproj, got \(referenced)"
+    )
+
+    let buildServer = try await XcodeBuildServer(
+      projectRoot: project.projectRoot,
+      containerPath: project.xcodeprojURL,
+      toolchainRegistry: .forTesting,
+      options: SourceKitLSPOptions(),
+      connectionToSourceKitLSP: LocalConnection(receiverName: "Dummy SourceKit-LSP")
+    )
+    addTeardownBlock { await buildServer.close() }
+
+    let response = try await buildServer.buildTargets(request: WorkspaceBuildTargetsRequest())
+    let names = response.targets.map { $0.displayName ?? "?" }
+    let frameworkTarget = try XCTUnwrap(
+      response.targets.first { $0.displayName == "Framework" },
+      "expected a project-referenced Framework target, got \(names)"
+    )
+    XCTAssertFalse(
+      frameworkTarget.tags.contains(.dependency),
+      "expected project-referenced Framework to NOT be tagged .dependency, got \(frameworkTarget.tags)"
+    )
+  }
+
   /// Test 5: a unit-test target is tagged `.test` while a non-test target is not. This is what
   /// drives `mayContainTests`, and therefore SourceKit-LSP test discovery, for Xcode projects.
   func testTestTargetIsTaggedAsTest() async throws {
