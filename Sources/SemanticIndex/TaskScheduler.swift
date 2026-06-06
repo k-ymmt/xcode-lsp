@@ -201,7 +201,12 @@ package actor QueuedTask<TaskDescription: TaskDescriptionProtocol> {
 
     self.resultTask = Task.detached(priority: priority) {
       await withTaskCancellationHandler {
-        await withTaskPriorityChangedHandler(initialPriority: self.priority) {
+        await withTaskPriorityChangedHandler(initialPriority: priority) {
+          withLoggingSubsystemAndScope(subsystem: taskSchedulerSubsystem, scope: nil) {
+            logger.debug(
+              "resultTask started for \(self.description.forLogging) (stored priority \(self.priority.rawValue), runtime priority \(Task.currentPriority.rawValue))"
+            )
+          }
           for await task in executionTaskCreatedStream {
             switch await task.valuePropagatingCancellation {
             case .cancelledToBeRescheduled:
@@ -212,14 +217,14 @@ package actor QueuedTask<TaskDescription: TaskDescriptionProtocol> {
               return
             }
           }
-        } taskPriorityChanged: {
+        } taskPriorityChanged: { newPriority in
           withLoggingSubsystemAndScope(subsystem: taskSchedulerSubsystem, scope: nil) {
             logger.debug(
-              "Updating priority of \(self.description.forLogging) from \(self.priority.rawValue) to \(Task.currentPriority.rawValue)"
+              "Updating priority of \(self.description.forLogging) from \(self.priority.rawValue) to \(newPriority.rawValue)"
             )
           }
-          self.priority = Task.currentPriority
-          taskPriorityChangedCallback(self.priority)
+          self.priority = newPriority
+          taskPriorityChangedCallback(newPriority)
         }
       } onCancel: {
         self.resultTaskCancelled.store(true, ordering: .relaxed)
@@ -459,9 +464,18 @@ package actor TaskScheduler<TaskDescription: TaskDescriptionProtocol> {
   /// After `shutDown` has been called, no more tasks will be executed on this `TaskScheduler`.
   package func shutDown() async {
     self.isShutDown = true
-    await self.currentlyExecutingTasks.concurrentForEach { task in
+    let allTasks = self.currentlyExecutingTasks + self.pendingTasks
+    await allTasks.concurrentForEach { task in
       task.cancel()
-      await task.waitToFinish()
+      do {
+        try await withTimeout(.seconds(10)) {
+          await task.waitToFinish()
+        }
+      } catch {
+        logger.error(
+          "Timed out waiting for task \(task.description.forLogging) to finish during shutdown"
+        )
+      }
     }
   }
 
@@ -541,6 +555,11 @@ package actor TaskScheduler<TaskDescription: TaskDescriptionProtocol> {
         // When the next task finishes, it calls `poke` again.
         // If a low priority task's priority gets elevated that task's priority will get elevated, which will call
         // `poke`.
+        withLoggingSubsystemAndScope(subsystem: taskSchedulerSubsystem, scope: nil) {
+          logger.debug(
+            "Cannot schedule \(task.description.forLogging) at priority \(task.priority.rawValue) (executing: \(self.currentlyExecutingTasks.count), pending: \(self.pendingTasks.count))"
+          )
+        }
         return
       }
       let dependencies = task.description.dependencies(to: currentlyExecutingTasks.map(\.description))
@@ -668,27 +687,5 @@ fileprivate extension Collection {
       result += transform(element)
     }
     return result
-  }
-}
-
-/// Version of the `withTaskPriorityChangedHandler` where the body doesn't throw.
-private func withTaskPriorityChangedHandler(
-  initialPriority: TaskPriority = Task.currentPriority,
-  pollingInterval: Duration = .seconds(0.1),
-  @_inheritActorContext operation: @escaping @Sendable () async -> Void,
-  taskPriorityChanged: @escaping @Sendable () -> Void
-) async {
-  do {
-    try await withTaskPriorityChangedHandler(
-      initialPriority: initialPriority,
-      pollingInterval: pollingInterval,
-      operation: operation as @Sendable () async throws -> Void,
-      taskPriorityChanged: taskPriorityChanged
-    )
-  } catch is CancellationError {
-  } catch {
-    // Since `operation` does not throw, the only error we expect `withTaskPriorityChangedHandler` to throw is a
-    // `CancellationError`, in which case we can just return.
-    logger.fault("Unexpected error thrown from withTaskPriorityChangedHandler: \(error.forLogging)")
   }
 }

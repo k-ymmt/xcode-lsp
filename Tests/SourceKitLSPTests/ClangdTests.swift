@@ -136,7 +136,7 @@ final class ClangdTests: SourceKitLSPTestCase {
 
   func testRestartClangdIfItDoesntReply() async throws {
     // We simulate clangd not replying until it is restarted using a hook.
-    let clangdRestarted = AtomicBool(initialValue: false)
+    let clangdRestarted = ThreadSafeBox<Bool>(initialValue: false)
     let clangdRestartedExpectation = self.expectation(description: "clangd restarted")
     let hooks = Hooks(preForwardRequestToClangd: { request in
       if !clangdRestarted.value {
@@ -162,7 +162,7 @@ final class ClangdTests: SourceKitLSPTestCase {
     let clangdServer = try await unwrap(testClient.primaryLanguageService(for: uri))
     await clangdServer.addStateChangeHandler { oldState, newState in
       if oldState == .connectionInterrupted, newState == .connected {
-        clangdRestarted.value = true
+        clangdRestarted.withLock { $0 = true }
         clangdRestartedExpectation.fulfill()
       }
     }

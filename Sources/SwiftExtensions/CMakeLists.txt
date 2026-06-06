@@ -1,7 +1,6 @@
 set(sources
   Array+Safe.swift
   Array+SortAndDedupe.swift
-  AsyncUtils.swift
   Cache.swift
   CartesianProduct.swift
   Collection+DropLast.swift
@@ -11,7 +10,6 @@ set(sources
   Duration+Seconds.swift
   FileManagerExtensions.swift
   LazyValue.swift
-  NSLock+WithLock.swift
   PipeAsStringHandler.swift
   Platform.swift
   Process+terminate.swift
@@ -19,7 +17,6 @@ set(sources
   RunWithCleanup.swift
   Sequence+AsyncMap.swift
   Sequence+ContainsAnyIn.swift
-  ThreadSafeBox.swift
   TransitiveClosure.swift
   URLExtensions.swift
 )

@@ -1327,18 +1327,18 @@ struct SwiftPMBuildServerTests {
   @Test
   func testBinaryTargetArtifactEventsDoNotTriggerPackageReload() async throws {
     try await withTestScratchDir { tempDir in
-      let packageInitialized = AtomicBool(initialValue: false)
-      let unexpectedReloadStarted = AtomicBool(initialValue: false)
+      let packageInitialized = ThreadSafeBox<Bool>(initialValue: false)
+      let unexpectedReloadStarted = ThreadSafeBox<Bool>(initialValue: false)
 
       let (server, projectRoot) = try await makeServerWithBinaryTargetAndWaitForInitialLoad(
         in: tempDir,
         reloadPackageDidStart: {
           if packageInitialized.value {
-            unexpectedReloadStarted.value = true
+            unexpectedReloadStarted.withLock { $0 = true }
           }
         }
       )
-      packageInitialized.value = true
+      packageInitialized.withLock { $0 = true }
 
       // SwiftPM extracts the artifact bundle to:
       //   <scratch>/artifacts/<package-identity>/<target-name>/<artifact-name>/
@@ -1380,19 +1380,19 @@ struct SwiftPMBuildServerTests {
     try await withTestScratchDir { tempDir in
       let customScratch = tempDir.appending(component: "custom-scratch")
 
-      let packageInitialized = AtomicBool(initialValue: false)
-      let unexpectedReloadStarted = AtomicBool(initialValue: false)
+      let packageInitialized = ThreadSafeBox<Bool>(initialValue: false)
+      let unexpectedReloadStarted = ThreadSafeBox<Bool>(initialValue: false)
 
       let (server, projectRoot) = try await makeServerWithBinaryTargetAndWaitForInitialLoad(
         in: tempDir,
         options: SourceKitLSPOptions(swiftPM: .init(scratchPath: try customScratch.filePath)),
         reloadPackageDidStart: {
           if packageInitialized.value {
-            unexpectedReloadStarted.value = true
+            unexpectedReloadStarted.withLock { $0 = true }
           }
         }
       )
-      packageInitialized.value = true
+      packageInitialized.withLock { $0 = true }
 
       // With a custom scratch path, SwiftPM extracts to <custom-scratch>/artifacts/.
       // Simulate the delete-and-re-expand cycle for those paths.
@@ -1642,6 +1642,42 @@ struct SwiftPMBuildServerTests {
         Issue.record("Expected swiftPM build server kind")
       }
     }
+  }
+
+  @Test
+  func testPackagePlugin() async throws {
+    let testProject = try await SwiftPMTestProject(
+      files: [
+        "Test.swift": """
+        #if NonDefaultTrait
+        #warning("Trait enabled")
+        #endif
+        """
+      ],
+      manifest: """
+        // swift-tools-version: 6.2
+
+        import PackageDescription
+
+        let package = Package(
+          name: "MyLibrary",
+          traits: [
+            .default(enabledTraits: []),
+            "NonDefaultTrait",
+          ],
+          targets: [.target(name: "MyLibrary")]
+        )
+        """,
+      options: SourceKitLSPOptions(swiftPM: .init(traits: ["NonDefaultTrait"])),
+      enableBackgroundIndexing: true
+    )
+
+    let (uri, _) = try testProject.openDocument("Test.swift")
+    let diagnostics = try await testProject.testClient.send(
+      DocumentDiagnosticsRequest(textDocument: TextDocumentIdentifier(uri))
+    )
+
+    #expect(diagnostics.fullReport?.items.map(\.message) == ["Trait enabled"])
   }
 }
 
