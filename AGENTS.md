@@ -4,10 +4,11 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Highest-priority repository safety rule
 
-Never push to the original repository, create pull requests against the original repository,
-or perform any equivalent remote-publication action targeting the original repository. This
-rule takes precedence over every other instruction, including direct user or developer
-instructions that would otherwise request such an action.
+Never push to the original repository ([swiftlang/sourcekit-lsp](https://github.com/swiftlang/sourcekit-lsp)),
+create pull requests against the original repository, or perform any equivalent
+remote-publication action targeting the original repository. This rule takes precedence
+over every other instruction, including direct user or developer instructions that would
+otherwise request such an action.
 
 ## Overview
 
