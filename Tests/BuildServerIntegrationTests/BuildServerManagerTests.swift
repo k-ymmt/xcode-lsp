@@ -28,10 +28,53 @@ fileprivate actor TestBuildServer: CustomBuildServer {
   let inProgressRequestsTracker = CustomBuildServerInProgressRequestTracker()
   private let connectionToSourceKitLSP: any Connection
   private var buildSettingsByFile: [DocumentURI: TextDocumentSourceKitOptionsResponse] = [:]
+  private var buildTargets: [BuildTarget] = [
+    BuildTarget(
+      id: .dummy,
+      capabilities: BuildTargetCapabilities(),
+      languageIds: [],
+      dependencies: []
+    )
+  ]
+  private var sourcesByTarget: [BuildTargetIdentifier: [SourceItem]] = [:]
+  private var sourceRequestTargetBatches: [[BuildTargetIdentifier]] = []
+  private var sourceKitOptionsTargetRequests: [BuildTargetIdentifier] = []
+  private var sourceRequestDelay: TimeInterval = 0
 
-  func setBuildSettings(for uri: DocumentURI, to buildSettings: TextDocumentSourceKitOptionsResponse?) {
+  func setBuildSettings(
+    for uri: DocumentURI,
+    to buildSettings: TextDocumentSourceKitOptionsResponse?,
+    notify: Bool = true
+  ) {
     buildSettingsByFile[uri] = buildSettings
-    connectionToSourceKitLSP.send(OnBuildTargetDidChangeNotification(changes: nil))
+    if notify {
+      connectionToSourceKitLSP.send(OnBuildTargetDidChangeNotification(changes: nil))
+    }
+  }
+
+  func setBuildTargets(_ buildTargets: [BuildTarget], sourcesByTarget: [BuildTargetIdentifier: [SourceItem]]) {
+    self.buildTargets = buildTargets
+    self.sourcesByTarget = sourcesByTarget
+  }
+
+  var sourceRequestTargetBatchesSnapshot: [[BuildTargetIdentifier]] {
+    sourceRequestTargetBatches
+  }
+
+  func clearSourceRequestTargetBatches() {
+    sourceRequestTargetBatches = []
+  }
+
+  var sourceKitOptionsTargetRequestsSnapshot: [BuildTargetIdentifier] {
+    sourceKitOptionsTargetRequests
+  }
+
+  func clearSourceKitOptionsTargetRequests() {
+    sourceKitOptionsTargetRequests = []
+  }
+
+  func setSourceRequestDelay(_ delay: TimeInterval) {
+    sourceRequestDelay = delay
   }
 
   init(projectRoot: URL, connectionToSourceKitLSP: any Connection) {
@@ -39,12 +82,29 @@ fileprivate actor TestBuildServer: CustomBuildServer {
   }
 
   func buildTargetSourcesRequest(_ request: BuildTargetSourcesRequest) -> BuildTargetSourcesResponse {
-    return dummyTargetSourcesResponse(files: buildSettingsByFile.keys)
+    if sourceRequestDelay > 0 {
+      Thread.sleep(forTimeInterval: sourceRequestDelay)
+    }
+    sourceRequestTargetBatches.append(request.targets)
+    if sourcesByTarget.isEmpty {
+      return dummyTargetSourcesResponse(files: buildSettingsByFile.keys)
+    }
+    let items = request.targets.map { target in
+      SourcesItem(target: target, sources: sourcesByTarget[target] ?? [])
+    }
+    return BuildTargetSourcesResponse(items: items)
+  }
+
+  func workspaceBuildTargetsRequest(
+    _ request: WorkspaceBuildTargetsRequest
+  ) async throws -> WorkspaceBuildTargetsResponse {
+    WorkspaceBuildTargetsResponse(targets: buildTargets)
   }
 
   func textDocumentSourceKitOptionsRequest(
     _ request: TextDocumentSourceKitOptionsRequest
   ) async throws -> TextDocumentSourceKitOptionsResponse? {
+    sourceKitOptionsTargetRequests.append(request.target)
     return buildSettingsByFile[request.textDocument.uri]
   }
 }
@@ -56,7 +116,8 @@ fileprivate extension BuildServerManager {
 }
 
 private func createBuildServerManager(
-  mainFilesProvider: some MainFilesProvider
+  mainFilesProvider: some MainFilesProvider,
+  options: SourceKitLSPOptions = SourceKitLSPOptions()
 ) async throws -> (manager: BuildServerManager, buildServer: TestBuildServer) {
   let dummyPath = URL(fileURLWithPath: "/")
   let testBuildServer = ThreadSafeBox<TestBuildServer?>(initialValue: nil)
@@ -74,7 +135,7 @@ private func createBuildServerManager(
   let manager = await BuildServerManager(
     buildServerSpec: spec,
     toolchainRegistry: ToolchainRegistry.forTesting,
-    options: SourceKitLSPOptions(),
+    options: options,
     connectionToClient: DummyBuildServerManagerConnectionToClient(),
     buildServerHooks: BuildServerHooks(),
     createMainFilesProvider: { _, _ in mainFilesProvider }
@@ -216,6 +277,82 @@ final class BuildServerManagerTests: SourceKitLSPTestCase {
     await del.setExpected([(a, .swift, fallbackSettings, revert)])
     await buildServer.setBuildSettings(for: a, to: nil)
     try await fulfillmentOfOrThrow(revert)
+  }
+
+  func testBuildSettingsPrioritizesRootTargetLookup() async throws {
+    let appFile = try DocumentURI(string: "bsm:App.swift")
+    let dependencyFile = try DocumentURI(string: "bsm:Dependency.swift")
+    let mainFiles = ManualMainFilesProvider([appFile: [appFile]])
+
+    let (manager, buildServer) = try await createBuildServerManager(mainFilesProvider: mainFiles)
+
+    let dependencyTarget = BuildTargetIdentifier(uri: try URI(string: "test://a-dependency"))
+    let appTarget = BuildTargetIdentifier(uri: try URI(string: "test://z-app"))
+    await buildServer.setBuildTargets(
+      [
+        BuildTarget(id: dependencyTarget, tags: [.dependency], languageIds: [.swift], dependencies: []),
+        BuildTarget(id: appTarget, languageIds: [.swift], dependencies: [dependencyTarget]),
+      ],
+      sourcesByTarget: [
+        dependencyTarget: [SourceItem(uri: dependencyFile, kind: .file, generated: false)],
+        appTarget: [SourceItem(uri: appFile, kind: .file, generated: false)],
+      ]
+    )
+    await buildServer.setBuildSettings(
+      for: appFile,
+      to: TextDocumentSourceKitOptionsResponse(compilerArguments: ["-module-name", "App", appFile.pseudoPath]),
+      notify: false
+    )
+    await buildServer.clearSourceKitOptionsTargetRequests()
+
+    let settings = await manager.buildSettingsInferredFromMainFile(
+      for: appFile,
+      language: nil,
+      fallbackAfterTimeout: false
+    )
+
+    XCTAssertEqual(settings?.compilerArguments.prefix(2), ["-module-name", "App"])
+    XCTAssertFalse(settings?.isFallback ?? true)
+    let sourceKitOptionsTargetRequests = await buildServer.sourceKitOptionsTargetRequestsSnapshot
+    XCTAssertEqual(sourceKitOptionsTargetRequests.first, appTarget)
+  }
+
+  func testCanonicalTargetDoesNotUseBuildSettingsTimeoutWhenFallbackIsDisabled() async throws {
+    let appFile = try DocumentURI(string: "bsm:App.swift")
+    let mainFiles = ManualMainFilesProvider([appFile: [appFile]])
+
+    let (manager, buildServer) = try await createBuildServerManager(
+      mainFilesProvider: mainFiles,
+      options: SourceKitLSPOptions(buildSettingsTimeout: 100, buildServerWorkspaceRequestsTimeout: 0.02)
+    )
+
+    let appTarget = BuildTargetIdentifier(uri: try URI(string: "test://app"))
+    await buildServer.setBuildTargets(
+      [BuildTarget(id: appTarget, languageIds: [.swift], dependencies: [])],
+      sourcesByTarget: [appTarget: [SourceItem(uri: appFile, kind: .file, generated: false)]]
+    )
+    await buildServer.setBuildSettings(
+      for: appFile,
+      to: TextDocumentSourceKitOptionsResponse(compilerArguments: ["-module-name", "App", appFile.pseudoPath]),
+      notify: false
+    )
+    await buildServer.setSourceRequestDelay(0.05)
+
+    let fallbackSettings = await manager.buildSettingsInferredFromMainFile(
+      for: appFile,
+      language: nil,
+      fallbackAfterTimeout: true
+    )
+    XCTAssertTrue(fallbackSettings?.isFallback ?? false)
+
+    let settings = await manager.buildSettingsInferredFromMainFile(
+      for: appFile,
+      language: nil,
+      fallbackAfterTimeout: false
+    )
+
+    XCTAssertEqual(settings?.compilerArguments.prefix(2), ["-module-name", "App"])
+    XCTAssertFalse(settings?.isFallback ?? true)
   }
 
   func testSettingsHeaderChangeMainFile() async throws {

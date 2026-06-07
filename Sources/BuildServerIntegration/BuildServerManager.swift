@@ -1082,11 +1082,103 @@ package actor BuildServerManager: QueueBasedMessageHandler {
 
   /// Returns the `BuildTargetIdentifier` that should be used for semantic functionality of the given document.
   package func canonicalTarget(for document: DocumentURI) async -> BuildTargetIdentifier? {
+    if let target = await self.canonicalTargetByPrioritizedSourceLookup(for: document) {
+      return target
+    }
+
     // Sort the targets to deterministically pick the same `BuildTargetIdentifier` every time.
     // We could allow the user to specify a preference of one target over another.
     return await targets(for: document)
       .sorted { $0.uri.stringValue < $1.uri.stringValue }
       .first
+  }
+
+  /// Fast path for canonical target inference.
+  ///
+  /// Asking for all targets' sources can be very expensive in workspaces with large dependency graphs. Prefer root
+  /// project targets first so common editor requests don't wait for package dependencies that cannot contain the file.
+  private func canonicalTargetByPrioritizedSourceLookup(for document: DocumentURI) async -> BuildTargetIdentifier? {
+    guard let orderedTargets = await prioritizedBuildTargets() else {
+      return nil
+    }
+
+    for (target, _) in orderedTargets {
+      let containsDocument =
+        await orLog("Getting source files for prioritized canonical target lookup") {
+          try await self.sourceFiles(in: [target]).contains { sourcesItem in
+            sourcesItem.sources.contains { sourceItem in
+              sourceItem.contains(document)
+            }
+          }
+        } ?? false
+      if containsDocument {
+        return target
+      }
+    }
+    return nil
+  }
+
+  private func prioritizedBuildTargets() async -> [(key: BuildTargetIdentifier, value: BuildTargetInfo)]? {
+    guard
+      let targets = await orLog(
+        "Getting build targets for prioritized lookup",
+        {
+          try await self.buildTargets()
+        }
+      )
+    else {
+      return nil
+    }
+
+    return targets.sorted { lhs, rhs in
+      let lhsTarget = lhs.value.target
+      let rhsTarget = rhs.value.target
+
+      let lhsIsDependency = lhsTarget.tags.contains(.dependency)
+      let rhsIsDependency = rhsTarget.tags.contains(.dependency)
+      if lhsIsDependency != rhsIsDependency {
+        return !lhsIsDependency
+      }
+
+      let lhsIsTest = lhsTarget.tags.contains(.test)
+      let rhsIsTest = rhsTarget.tags.contains(.test)
+      if lhsIsTest != rhsIsTest {
+        return !lhsIsTest
+      }
+
+      let lhsIsNotBuildable = lhsTarget.tags.contains(.notBuildable)
+      let rhsIsNotBuildable = rhsTarget.tags.contains(.notBuildable)
+      if lhsIsNotBuildable != rhsIsNotBuildable {
+        return !lhsIsNotBuildable
+      }
+
+      return lhs.key.uri.stringValue < rhs.key.uri.stringValue
+    }
+  }
+
+  private func buildSettingsFromPrioritizedTargets(
+    for document: DocumentURI,
+    language: Language
+  ) async -> FileBuildSettings? {
+    guard let orderedTargets = await prioritizedBuildTargets() else {
+      return nil
+    }
+
+    for (target, _) in orderedTargets {
+      guard
+        let settings = await self.buildSettings(
+          for: document,
+          in: target,
+          language: language,
+          fallbackAfterTimeout: false
+        ),
+        !settings.isFallback
+      else {
+        continue
+      }
+      return settings
+    }
+    return nil
   }
 
   /// Returns the target's module name as parsed from the `BuildTargetIdentifier`'s compiler arguments.
@@ -1325,10 +1417,18 @@ package actor BuildServerManager: QueueBasedMessageHandler {
       basedOn document: DocumentURI
     ) async -> (mainFile: DocumentURI, settings: FileBuildSettings)? {
       let mainFile = await self.mainFile(for: document, language: language)
+      if explicitlyRequestedTarget == nil, !fallbackAfterTimeout,
+        let languageForFile = language ?? Language(inferredFromFileExtension: mainFile),
+        let settings = await self.buildSettingsFromPrioritizedTargets(for: mainFile, language: languageForFile)
+      {
+        return (mainFile, settings)
+      }
       let settings: FileBuildSettings? = await orLog("Getting build settings") { () -> FileBuildSettings? in
         let target: WithTimeoutResult<BuildTargetIdentifier?> =
           if let explicitlyRequestedTarget {
             .result(explicitlyRequestedTarget)
+          } else if !fallbackAfterTimeout {
+            .result(await self.canonicalTarget(for: mainFile))
           } else {
             try await withTimeoutResult(options.buildSettingsTimeoutOrDefault) {
               return await self.canonicalTarget(for: mainFile)
@@ -1590,14 +1690,19 @@ package actor BuildServerManager: QueueBasedMessageHandler {
     }
 
     let response = try await cachedTargetSources.get(request, isolation: self) { request in
-      try await withTimeout(self.options.buildServerWorkspaceRequestsTimeoutOrDefault) {
-        guard let buildServerAdapter = try await self.buildServerAdapterAfterInitialized else {
-          return BuildTargetSourcesResponse(items: [])
-        }
-        return try await buildServerAdapter.send(request)
-      } resultReceivedAfterTimeout: { newResult in
-        await self.buildTargetsDidChange(.sourceFilesReceivedResultAfterTimeout(request: request, newResult: newResult))
-      } ?? BuildTargetSourcesResponse(items: [])
+      let response: BuildTargetSourcesResponse
+      response =
+        try await withTimeout(self.options.buildServerWorkspaceRequestsTimeoutOrDefault) {
+          guard let buildServerAdapter = try await self.buildServerAdapterAfterInitialized else {
+            return BuildTargetSourcesResponse(items: [])
+          }
+          return try await buildServerAdapter.send(request)
+        } resultReceivedAfterTimeout: { newResult in
+          await self.buildTargetsDidChange(
+            .sourceFilesReceivedResultAfterTimeout(request: request, newResult: newResult)
+          )
+        } ?? BuildTargetSourcesResponse(items: [])
+      return response
     }
     return response.items
   }
@@ -1736,7 +1841,7 @@ package actor BuildServerManager: QueueBasedMessageHandler {
   /// `language` is a hint of the document's language to speed up the `main` file lookup. Passing `nil` if the language
   /// is unknown should always be safe.
   package func mainFile(for uri: DocumentURI, language: Language?, useCache: Bool = true) async -> DocumentURI {
-    if language == .swift {
+    if language == .swift || (language == nil && Language(inferredFromFileExtension: uri) == .swift) {
       // Swift doesn't have main files. Skip the main file provider query.
       return uri
     }
@@ -1897,6 +2002,20 @@ package actor BuildServerManager: QueueBasedMessageHandler {
 /// expensive and this allows us to cache the path components.
 private func isDescendant(_ selfPathComponents: [String], of otherPathComponents: [String]) -> Bool {
   return selfPathComponents.dropLast().starts(with: otherPathComponents)
+}
+
+private extension SourceItem {
+  func contains(_ document: DocumentURI) -> Bool {
+    if uri == document {
+      return true
+    }
+    guard kind == .directory, let directoryPathComponents = uri.fileURL?.pathComponents,
+      let documentPathComponents = document.fileURL?.pathComponents
+    else {
+      return false
+    }
+    return isDescendant(documentPathComponents, of: directoryPathComponents)
+  }
 }
 
 fileprivate extension TextDocumentSourceKitOptionsResponse {
